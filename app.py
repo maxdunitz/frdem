@@ -333,55 +333,43 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
-
 def get_from_number(call) -> str:
     """
-    Return the true caller's number for this call instance.
-    Strategy:
-      - Try this call's from_/from
-      - Fetch full call; try again
-      - If call is outbound* and has a parent_call_sid, fetch parent and use its from
-      - Fall back to from_formatted / forwarded_from / caller_name
-      - Else 'Unknown'
+    Return the original caller's number, robustly.
+    Logic:
+      - Determine the 'base' call: parent if present, else this call.
+      - Fetch that call to get full properties.
+      - Read 'from_' (preferred) or raw 'from'; fallbacks if needed.
     """
 
     def _extract_from(obj):
         if not obj:
             return None
-        # First try the Python-safe attribute, then the raw JSON
         v = getattr(obj, 'from_', None)
         if v:
             return v
         props = getattr(obj, '_properties', {}) or {}
         return props.get('from')
 
-    num = _extract_from(call)
+    # Prefer parent call if present (inbound leg has the real caller)
+    parent_sid = getattr(call, 'parent_call_sid', None) \
+                 or getattr(call, '_properties', {}).get('parent_call_sid')
+
+    base_sid = parent_sid or call.sid
+
+    try:
+        base = twilio_client.calls(base_sid).fetch()
+        print("base", base)
+    except TwilioRestException:
+        base = call  # fail open with what we have
+
+    num = _extract_from(base)
+    print("num", num)
     if num:
         return num
 
-    full = None
-    try:
-        full = twilio_client.calls(call.sid).fetch()
-        num = _extract_from(full)
-        if num:
-            return num
-    except TwilioRestException:
-        full = None  # continue safely
-
-    # If this is a child leg (outbound) and has a parent, fetch parent
-    direction = (getattr(call, 'direction', None) or getattr(full, 'direction', None) or '') or ''
-    parent_sid = (getattr(call, 'parent_call_sid', None) or getattr(full, 'parent_call_sid', None))
-    if direction.startswith('outbound') and parent_sid:
-        try:
-            parent = twilio_client.calls(parent_sid).fetch()
-            num = _extract_from(parent)
-            if num:
-                return num
-        except TwilioRestException:
-            pass
-
-    # Last-resort fallbacks for display
-    props = getattr(full, '_properties', {}) if full else getattr(call, '_properties', {})
+    # Last-resort fallbacks for display only
+    props = getattr(base, '_properties', {}) or {}
     for k in ('from_formatted', 'forwarded_from', 'caller_name'):
         if props.get(k):
             return props[k]
