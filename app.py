@@ -375,24 +375,30 @@ def admin_calls():
     error_msg = None
 
     try:
-        # Filter for inbound to see the actual people calling you
-        calls = twilio_client.calls.list(direction='inbound', limit=10)
+        # Fetch the last 10 calls without the 'direction' filter to avoid SDK errors
+        calls = twilio_client.calls.list(limit=10)
 
         for c in calls:
-            from_number = c.from_formatted if c.from_formatted else c.from_
+            # Check direction manually. 
+            # We want 'inbound' to see the people calling the bot.
+            # If you want to see everything, you can remove this 'if' check.
+            if c.direction != 'inbound':
+                continue
+
+            from_number = c.from_formatted if hasattr(c, 'from_formatted') and c.from_formatted else c.from_
             
             recording_url = None
             transcription_text = None
             transcription_url = None
 
-            # 1. Get Recordings for this specific call
+            # 1. Look for Recordings
             try:
                 recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
                 if recs:
                     rec = recs[0]
                     recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"
 
-                    # 2. Get Transcriptions for this recording
+                    # 2. Look for Transcriptions
                     try:
                         trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)
                         if trans:
@@ -400,9 +406,9 @@ def admin_calls():
                             transcription_text = t.transcription_text
                             transcription_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
                     except Exception:
-                        transcription_text = "Transcription error"
+                        pass
             except Exception:
-                recording_url = None
+                pass
 
             items.append({
                 "sid": c.sid,
@@ -421,14 +427,12 @@ def admin_calls():
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
 
-    # Add the error banner if needed
     banner = ""
     if error_msg:
         banner = f'<div style="padding:.75rem;background:#fff3cd;color:#664d03;border:1px solid #ffecb5;border-radius:6px;margin-bottom:1rem;"><strong>Note:</strong> {error_msg}</div>'
 
     html = TEMPLATE.replace("<body>", f"<body>{banner}", 1)
     return render_template_string(html, items=items)
-
 
 '''
 @app.route("/admin/calls")
