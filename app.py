@@ -138,13 +138,14 @@ def send_email(f, t, subject, html):
 @app.route("/receive_sms", methods=['GET', 'POST'])
 @csrf.exempt
 def receive_sms():
-    time = france_now()
-    
     ## GET INCOMING INFO ##
     msg = request.form['Body'] # THE TEXT ITSELF
     number = request.form['From'] # THE SENDER'S NUMBER
     to = request.form['To'] # THE INCOMING NUMBER
-    send_email(number, msg, time)
+    now = france_now()
+    subject = f"Incoming SMS from {number} @ {now.isoformat()}"
+    html = f"<p>To: {to}</p><p>From: {number}</p><p>Body: {msg}</p>"
+    send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     return str(MessagingResponse())
 
 ## RECEIVE CALL ##
@@ -336,13 +337,13 @@ audio { width: 100%; margin-top: 0.5rem; }
 def admin_calls():
     # 1) Fetch last 10 calls (newest-first)
     # Twilio helper defaults to newest-first; page_size limits count.  # See Twilio Voice API docs.
-    calls = client.calls.list(page_size=10)  # [1](https://www.koyeb.com/pricing)
+    calls = twilio_client.calls.list(page_size=10)  # [1](https://www.koyeb.com/pricing)
 
     items = []
     for c in calls:
         # 2) Attempt to find a recording associated with this call
         #    Calls --> Recordings subresource. If you recorded voicemail via <Record>, at least one will exist.
-        recs = client.recordings.list(call_sid=c.sid, limit=1)  # get the latest/first
+        recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)  # get the latest/first
         recording_url = None
         transcription_text = None
         transcription_url = None
@@ -355,7 +356,7 @@ def admin_calls():
 
             # 3) If transcriptions were generated, they are linked to the recording.
             #    Query Transcriptions by Recording SID (may be zero or more).
-            trans = client.transcriptions.list(recording_sid=rec.sid, limit=1)  # [1](https://www.koyeb.com/pricing)
+            trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)  # [1](https://www.koyeb.com/pricing)
             if trans:
                 t = trans[0]
                 transcription_text = t.transcription_text
