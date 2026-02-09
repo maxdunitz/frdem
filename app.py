@@ -333,38 +333,44 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
-def _safe_call_field(call, name):
+def _safe_call_field(call, name: str):
     """Return a property from a CallInstance robustly (handles 'from' vs 'from_')."""
     val = getattr(call, name, None)
     if val is not None:
         return val
     if name.endswith('_'):
-        # fall back to raw JSON key without the trailing underscore
-        return getattr(call, '_properties', {}).get(name[:-1], None)
-    return getattr(call, '_properties', {}).get(name, None)
+        return getattr(call, '_properties', {}).get(name[:-1])
+    return getattr(call, '_properties', {}).get(name)
 
+
+from twilio.base.exceptions import TwilioRestException
 
 @app.route("/admin/calls")
 @requires_auth
 def admin_calls():
-    try:
-        calls = twilio_client.calls.list(limit=10, page_size=10)  # pagination control per helper docs [2](https://deepwiki.com/twilio/twilio-python/8-advanced-usage)
+    items = []
+    error_msg = None
 
-        items = []
+    try:
+        # Fetch exactly 10 newest calls. This prevents accidental deep pagination. [1](https://deepwiki.com/twilio/twilio-python/8-advanced-usage)
+        calls = twilio_client.calls.list(limit=10, page_size=10)
+
         for c in calls:
-            from_number = _safe_call_field(c, 'from_')  # falls back to JSON 'from'
+            from_number = _safe_call_field(c, 'from_')   # falls back to JSON 'from'
             to_number   = _safe_call_field(c, 'to')
 
-            # fetch one latest recording (if any)
-            recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
-            recording_url = transcription_text = transcription_url = None
+            recording_url = None
+            transcription_text = None
+            transcription_url  = None
 
+            recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
             if recs:
                 rec = recs[0]
-                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"  # [3](https://www.twilio.com/docs)
+                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"
 
                 trans = twilio_client.recordings(rec.sid).transcriptions.list(limit=1)
                 if trans:
+                    t = trans[0]
                     transcription_text = t.transcription_text
                     transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
 
@@ -380,9 +386,15 @@ def admin_calls():
                 "transcription_url": transcription_url,
             })
 
-        return render_template_string(TEMPLATE, items=items)
-
     except TwilioRestException as e:
-        return (f"<pre>Twilio error {e.status} / {e.code}: {e.msg}\nURI: {e.uri}</pre>", 502)
+        error_msg = f"Twilio error {e.status} / {getattr(e, 'code', '?')}: {e.msg or 'unknown error'}"
+    except Exception as e:
+        error_msg = f"Unexpected error: {type(e).__name__}: {str(e)}"
 
+    # Always render; include a banner if any error occurred for visibility.
+    banner = ""
+    if error_msg:
+        banner = f'<div style="padding:.75rem;background:#fff3cd;color:#664d03;border:1px solid #ffecb5;border-radius:6px;margin-bottom:1rem;"><strong>Note:</strong> {error_msg}</div>'
 
+    html = TEMPLATE.replace("<body>", f"<body>{banner}", 1)
+    return render_template_string(html, items=items)
