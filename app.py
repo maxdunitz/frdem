@@ -372,6 +372,49 @@ def get_from_number(call) -> str:
 @requires_auth
 def admin_calls():
     items = []
+    try:
+        # Filter for 'inbound' to see the people calling your bot
+        # This is the leg where recordings usually live
+        calls = twilio_client.calls.list(direction='inbound', limit=10)
+
+        for c in calls:
+            # Use the built-in attributes; Twilio's library handles 'from_' automatically
+            from_number = c.from_formatted if c.from_formatted else c.from_
+            
+            # Look for recordings specifically for this Call SID
+            recording_url = None
+            transcription_text = None
+            
+            recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
+            if recs:
+                rec = recs[0]
+                # Constructing the URL manually is fine, but verify the Extension (.mp3)
+                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"
+
+                # Check for transcriptions attached to this recording
+                trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)
+                if trans:
+                    transcription_text = trans[0].transcription_text
+
+            items.append({
+                "sid": c.sid,
+                "start_time": c.start_time,
+                "from_": from_number,
+                "to": c.to,
+                "status": c.status,
+                "duration": c.duration,
+                "recording_url": recording_url,
+                "transcription_text": transcription_text
+            })
+
+
+
+
+'''
+@app.route("/admin/calls")
+@requires_auth
+def admin_calls():
+    items = []
     error_msg = None
 
     try:
@@ -425,3 +468,4 @@ def admin_calls():
 
     html = TEMPLATE.replace("<body>", f"<body>{banner}", 1)
     return render_template_string(html, items=items)
+'''
