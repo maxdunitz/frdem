@@ -334,7 +334,7 @@ audio { width: 100%; margin-top: 0.5rem; }
 """
 
 
-def get_caller_number(call) -> str:
+def get_from_number(call) -> str:
     """
     Return the true caller's number for this call instance.
     Strategy:
