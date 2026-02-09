@@ -42,7 +42,7 @@ TEXTBOT_NAME = "DAF TEXT BOT"
 CALLBOT_NAME = "DAF CALL BOT"
 
 # Setup Twilio client
-http_client = TwilioHttpClient(timeout=10)
+http_client = TwilioHttpClient(timeout=20)
 twilio_client = Client(TWILIO_ACCT, TWILIO_SECRET, http_client=http_client)
 
 ## VOICE MESSAGE LOCATIONS ##
@@ -375,15 +375,11 @@ def admin_calls():
     error_msg = None
 
     try:
-        # Fetch the last 10 calls without the 'direction' filter to avoid SDK errors
-        calls = twilio_client.calls.list(limit=10)
+        calls = twilio_client.calls.list(limit=30)
 
         for c in calls:
-            # Check direction manually. 
-            # We want 'inbound' to see the people calling the bot.
-            # If you want to see everything, you can remove this 'if' check.
-            if c.direction != 'inbound':
-                continue
+            #if c.direction != 'inbound':
+            #    continue
 
             from_number = c.from_formatted if hasattr(c, 'from_formatted') and c.from_formatted else c.from_
             
@@ -391,7 +387,6 @@ def admin_calls():
             transcription_text = None
             transcription_url = None
 
-            # 1. Look for Recordings
             try:
                 recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
                 if recs:
