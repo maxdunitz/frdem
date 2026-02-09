@@ -333,21 +333,60 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
-def get_from_number(call) -> str:
-    """
-    Robustly extract the caller's number from a CallInstance across helper versions. Fallback: 'Unknown'
-    """
-    v = getattr(call, 'from_', None)
-    if v: 
-        return v
 
-    props = getattr(call, '_properties', {}) or {}
-    for key in ('from', 'from_formatted', 'forwarded_from', 'caller_name'):
-        if props.get(key):
-            return props[key]
+def get_caller_number(call) -> str:
+    """
+    Return the true caller's number for this call instance.
+    Strategy:
+      - Try this call's from_/from
+      - Fetch full call; try again
+      - If call is outbound* and has a parent_call_sid, fetch parent and use its from
+      - Fall back to from_formatted / forwarded_from / caller_name
+      - Else 'Unknown'
+    """
+
+    def _extract_from(obj):
+        if not obj:
+            return None
+        # First try the Python-safe attribute, then the raw JSON
+        v = getattr(obj, 'from_', None)
+        if v:
+            return v
+        props = getattr(obj, '_properties', {}) or {}
+        return props.get('from')
+
+    num = _extract_from(call)
+    if num:
+        return num
+
+    full = None
+    try:
+        full = twilio_client.calls(call.sid).fetch()
+        num = _extract_from(full)
+        if num:
+            return num
+    except TwilioRestException:
+        full = None  # continue safely
+
+    # If this is a child leg (outbound) and has a parent, fetch parent
+    direction = (getattr(call, 'direction', None) or getattr(full, 'direction', None) or '') or ''
+    parent_sid = (getattr(call, 'parent_call_sid', None) or getattr(full, 'parent_call_sid', None))
+    if direction.startswith('outbound') and parent_sid:
+        try:
+            parent = twilio_client.calls(parent_sid).fetch()
+            num = _extract_from(parent)
+            if num:
+                return num
+        except TwilioRestException:
+            pass
+
+    # Last-resort fallbacks for display
+    props = getattr(full, '_properties', {}) if full else getattr(call, '_properties', {})
+    for k in ('from_formatted', 'forwarded_from', 'caller_name'):
+        if props.get(k):
+            return props[k]
 
     return 'Unknown'
-
 
 @app.route("/admin/calls")
 @requires_auth
@@ -361,7 +400,7 @@ def admin_calls():
         for c in calls:
             from_number = get_from_number(c)           
             to_number   = getattr(c, 'to', None) or getattr(c, '_properties', {}).get('to')
-            
+
             recording_url = None
             transcription_text = None
             transcription_url  = None
