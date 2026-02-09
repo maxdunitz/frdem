@@ -333,22 +333,15 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
-
 def _safe_call_field(call, name):
-    """
-    Return a property from a CallInstance in a version-agnostic way.
-    Tries attribute (e.g., from_) first, then raw JSON (e.g., 'from').
-    """
-    # try attribute access first (e.g., call.from_, call.to)
+    """Return a property from a CallInstance robustly (handles 'from' vs 'from_')."""
     val = getattr(call, name, None)
     if val is not None:
         return val
-    # if name ends with underscore (like 'from_'), try raw JSON key without underscore
     if name.endswith('_'):
+        # fall back to raw JSON key without the trailing underscore
         return getattr(call, '_properties', {}).get(name[:-1], None)
-    # else, try raw JSON key as-is
     return getattr(call, '_properties', {}).get(name, None)
-
 
 
 @app.route("/admin/calls")
@@ -370,12 +363,10 @@ def admin_calls():
                 rec = recs[0]
                 recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"  # [3](https://www.twilio.com/docs)
 
-                # If you enabled transcriptions for recordings, list them
-                trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)
+                trans = twilio_client.recordings(rec.sid).transcriptions.list(limit=1)
                 if trans:
-                    t = trans[0]
                     transcription_text = t.transcription_text
-                    transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"  # [3](https://www.twilio.com/docs)
+                    transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
 
             items.append({
                 "sid": c.sid,
