@@ -337,7 +337,7 @@ audio { width: 100%; margin-top: 0.5rem; }
 def admin_calls():
     # 1) Fetch last 10 calls (newest-first)
     # Twilio helper defaults to newest-first; page_size limits count.  # See Twilio Voice API docs.
-    calls = twilio_client.calls.list(page_size=10)  # [1](https://www.koyeb.com/pricing)
+    calls = twilio_client.calls.list(limit=10, page_size=10)  # [1](https://www.koyeb.com/pricing)
 
     items = []
     for c in calls:
