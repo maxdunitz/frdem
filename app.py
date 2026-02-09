@@ -335,13 +335,8 @@ audio { width: 100%; margin-top: 0.5rem; }
 
 def get_from_number(call) -> str:
     """
-    Return the original caller's number, robustly.
-    Logic:
-      - Determine the 'base' call: parent if present, else this call.
-      - Fetch that call to get full properties.
-      - Read 'from_' (preferred) or raw 'from'; fallbacks if needed.
+    Return the original caller's number.
     """
-
     def _extract_from(obj):
         if not obj:
             return None
@@ -351,29 +346,26 @@ def get_from_number(call) -> str:
         props = getattr(obj, '_properties', {}) or {}
         return props.get('from')
 
-    # Prefer parent call if present (inbound leg has the real caller)
+    # parent leg holds the real caller
     parent_sid = getattr(call, 'parent_call_sid', None) \
                  or getattr(call, '_properties', {}).get('parent_call_sid')
-
     base_sid = parent_sid or call.sid
 
     try:
         base = twilio_client.calls(base_sid).fetch()
-        print("base", base)
+        print("BASE", base)
     except TwilioRestException:
-        base = call  # fail open with what we have
+        base = call  # fail open
 
     num = _extract_from(base)
-    print("num", num)
+    print("NUM", num)
     if num:
         return num
 
-    # Last-resort fallbacks for display only
     props = getattr(base, '_properties', {}) or {}
     for k in ('from_formatted', 'forwarded_from', 'caller_name'):
         if props.get(k):
             return props[k]
-
     return 'Unknown'
 
 @app.route("/admin/calls")
@@ -386,23 +378,28 @@ def admin_calls():
         calls = twilio_client.calls.list(limit=10, page_size=10)
 
         for c in calls:
-            from_number = get_from_number(c)           
+            from_number = get_from_number(c)
             to_number   = getattr(c, 'to', None) or getattr(c, '_properties', {}).get('to')
 
-            recording_url = None
-            transcription_text = None
-            transcription_url  = None
+            recording_url = transcription_text = transcription_url = None
 
-            recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
+            parent_sid = getattr(c, 'parent_call_sid', None) \
+                         or getattr(c, '_properties', {}).get('parent_call_sid')
+            base_sid = parent_sid or c.sid
+            recs = twilio_client.recordings.list(call_sid=base_sid, limit=1)
             if recs:
                 rec = recs[0]
-                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"
+                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3" 
 
-                trans = twilio_client.recordings(rec.sid).transcriptions.list(limit=1)
-                if trans:
-                    t = trans[0]
-                    transcription_text = t.transcription_text
-                    transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
+                try:
+                    trans = twilio_client.recordings(rec.sid).transcriptions.list(limit=1)
+                    if trans:
+                        t = trans[0]
+                        transcription_text = t.transcription_text
+                        transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
+                except Exception:
+                    pass
+
 
             items.append({
                 "sid": c.sid,
