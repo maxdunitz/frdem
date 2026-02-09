@@ -333,17 +333,21 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
-def _safe_call_field(call, name: str):
-    """Return a property from a CallInstance robustly (handles 'from' vs 'from_')."""
-    val = getattr(call, name, None)
-    if val is not None:
-        return val
-    if name.endswith('_'):
-        return getattr(call, '_properties', {}).get(name[:-1])
-    return getattr(call, '_properties', {}).get(name)
+def get_from_number(call) -> str:
+    """
+    Robustly extract the caller's number from a CallInstance across helper versions. Fallback: 'Unknown'
+    """
+    v = getattr(call, 'from_', None)
+    if v: 
+        return v
 
+    props = getattr(call, '_properties', {}) or {}
+    for key in ('from', 'from_formatted', 'forwarded_from', 'caller_name'):
+        if props.get(key):
+            return props[key]
 
-from twilio.base.exceptions import TwilioRestException
+    return 'Unknown'
+
 
 @app.route("/admin/calls")
 @requires_auth
@@ -352,10 +356,12 @@ def admin_calls():
     error_msg = None
 
     try:
-        # Fetch exactly 10 newest calls. This prevents accidental deep pagination. [1](https://deepwiki.com/twilio/twilio-python/8-advanced-usage)
         calls = twilio_client.calls.list(limit=10, page_size=10)
 
         for c in calls:
+            from_number = get_from_number(c)           
+            to_number   = getattr(c, 'to', None) or getattr(c, '_properties', {}).get('to')
+
             from_number = _safe_call_field(c, 'from_')   # falls back to JSON 'from'
             to_number   = _safe_call_field(c, 'to')
 
