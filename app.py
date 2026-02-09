@@ -361,10 +361,7 @@ def admin_calls():
         for c in calls:
             from_number = get_from_number(c)           
             to_number   = getattr(c, 'to', None) or getattr(c, '_properties', {}).get('to')
-
-            from_number = _safe_call_field(c, 'from_')   # falls back to JSON 'from'
-            to_number   = _safe_call_field(c, 'to')
-
+            
             recording_url = None
             transcription_text = None
             transcription_url  = None
