@@ -12,12 +12,12 @@ from authlib.integrations.flask_client import OAuth
 import random
 import resend
 from zoneinfo import ZoneInfo
-
+from twilio.http.http_client import TwilioHttpClient
+from twilio.base.exceptions import TwilioRestException
 
 ## load environment variables
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASS = os.getenv("ADMIN_PASS")  # set in Koyeb secrets
-
 
 TWILIO_ACCT = os.environ["TWILIO_ACCT"]
 TWILIO_SECRET = os.environ["TWILIO_SECRET"]
@@ -42,7 +42,8 @@ TEXTBOT_NAME = "DAF TEXT BOT"
 CALLBOT_NAME = "DAF CALL BOT"
 
 # Setup Twilio client
-twilio_client = Client(TWILIO_ACCT, TWILIO_SECRET)
+http_client = TwilioHttpClient(timeout=10)
+twilio_client = Client(TWILIO_ACCT, TWILIO_SECRET, http_client=http_client)
 
 ## VOICE MESSAGE LOCATIONS ##
 ENGLISH_URL = os.environ['ENGLISH_URL']
@@ -332,48 +333,65 @@ audio { width: 100%; margin-top: 0.5rem; }
 </body></html>
 """
 
+
+def _safe_call_field(call, name):
+    """
+    Return a property from a CallInstance in a version-agnostic way.
+    Tries attribute (e.g., from_) first, then raw JSON (e.g., 'from').
+    """
+    # try attribute access first (e.g., call.from_, call.to)
+    val = getattr(call, name, None)
+    if val is not None:
+        return val
+    # if name ends with underscore (like 'from_'), try raw JSON key without underscore
+    if name.endswith('_'):
+        return getattr(call, '_properties', {}).get(name[:-1], None)
+    # else, try raw JSON key as-is
+    return getattr(call, '_properties', {}).get(name, None)
+
+
+
 @app.route("/admin/calls")
 @requires_auth
 def admin_calls():
-    # 1) Fetch last 10 calls (newest-first)
-    # Twilio helper defaults to newest-first; page_size limits count.  # See Twilio Voice API docs.
-    calls = twilio_client.calls.list(limit=10, page_size=10)  # [1](https://www.koyeb.com/pricing)
+    try:
+        calls = twilio_client.calls.list(limit=10, page_size=10)  # pagination control per helper docs [2](https://deepwiki.com/twilio/twilio-python/8-advanced-usage)
 
-    items = []
-    for c in calls:
-        # 2) Attempt to find a recording associated with this call
-        #    Calls --> Recordings subresource. If you recorded voicemail via <Record>, at least one will exist.
-        recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)  # get the latest/first
-        recording_url = None
-        transcription_text = None
-        transcription_url = None
+        items = []
+        for c in calls:
+            from_number = _safe_call_field(c, 'from_')  # falls back to JSON 'from'
+            to_number   = _safe_call_field(c, 'to')
 
-        if recs:
-            rec = recs[0]
-            # Recording media URL: Twilio serves via HTTPS; we can build the URL using the recording SID.
-            # e.g., https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Recordings/{RecordingSid}.mp3
-            recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{rec.sid}.mp3"  # [1](https://www.koyeb.com/pricing)
+            # fetch one latest recording (if any)
+            recs = twilio_client.recordings.list(call_sid=c.sid, limit=1)
+            recording_url = transcription_text = transcription_url = None
 
-            # 3) If transcriptions were generated, they are linked to the recording.
-            #    Query Transcriptions by Recording SID (may be zero or more).
-            trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)  # [1](https://www.koyeb.com/pricing)
-            if trans:
-                t = trans[0]
-                transcription_text = t.transcription_text
-                # Twilio provides a resource URL (JSON); we can link to it for details.
-                transcription_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Transcriptions/{t.sid}.json"  # [1](https://www.koyeb.com/pricing)
+            if recs:
+                rec = recs[0]
+                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3"  # [3](https://www.twilio.com/docs)
 
-        items.append({
-            "sid": c.sid,
-            "start_time": c.start_time,   # may be None for in-progress
-            "from_": c.from_,
-            "to": c.to,
-            "status": c.status,
-            "duration": c.duration,       # may be None until completed
-            "recording_url": recording_url,
-            "transcription_text": transcription_text,
-            "transcription_url": transcription_url,
-        })
+                # If you enabled transcriptions for recordings, list them
+                trans = twilio_client.transcriptions.list(recording_sid=rec.sid, limit=1)
+                if trans:
+                    t = trans[0]
+                    transcription_text = t.transcription_text
+                    transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"  # [3](https://www.twilio.com/docs)
 
-    return render_template_string(TEMPLATE, items=items)
+            items.append({
+                "sid": c.sid,
+                "start_time": c.start_time,
+                "from_": from_number,
+                "to": to_number,
+                "status": c.status,
+                "duration": c.duration,
+                "recording_url": recording_url,
+                "transcription_text": transcription_text,
+                "transcription_url": transcription_url,
+            })
+
+        return render_template_string(TEMPLATE, items=items)
+
+    except TwilioRestException as e:
+        return (f"<pre>Twilio error {e.status} / {e.code}: {e.msg}\nURI: {e.uri}</pre>", 502)
+
 
