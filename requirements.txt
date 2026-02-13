@@ -5,7 +5,7 @@ gspread
 rq>=0.5.6
 flask_sqlalchemy
 psycopg2-binary
-psycopg2
+nexmo>=2.3
 flask_wtf
 python-dotenv
 requests
