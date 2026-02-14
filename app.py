@@ -14,6 +14,8 @@ import resend
 from zoneinfo import ZoneInfo
 from twilio.http.http_client import TwilioHttpClient
 from twilio.base.exceptions import TwilioRestException
+from flask_sqlalchemy import SQLAlchemy
+import nexmo 
 
 ## load environment variables
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
@@ -108,6 +110,27 @@ def correct_number(s):
 app = Flask(__name__)
 csrf = CSRFProtect(app)
 app.secret_key = SECRET_KEY
+
+
+# Configure Postgres
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db_pg = SQLAlchemy(app)
+
+class CommunicationLog(db_pg.Model):
+    id = db_pg.Column(db_pg.Integer, primary_key=True)
+    provider = db_pg.Column(db_pg.String(20))     # 'Twilio' or 'Nexmo'
+    comm_type = db_pg.Column(db_pg.String(20))    # 'SMS' or 'Call'
+    direction = db_pg.Column(db_pg.String(20))    # 'Inbound' or 'Outbound'
+    from_num = db_pg.Column(db_pg.String(50))
+    to_num = db_pg.Column(db_pg.String(50))
+    content = db_pg.Column(db_pg.Text)            # SMS text or Status
+    recording_url = db_pg.Column(db_pg.Text)
+    timestamp = db_pg.Column(db_pg.DateTime, default=france_now)
+
+# Initialize database
+with app.app_context():
+    db_pg.create_all()
 
 ###################### EMAIL OUR ACCOUNT ######################
 
@@ -448,22 +471,53 @@ client = nexmo.Client(
     private_key=NEXMO_PRIVATE_KEY,
 )
 
-# Configure Postgres
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db_pg = SQLAlchemy(app)
+@app.route("/new-recording", methods=["POST"])
+def new_recording():
+    data = request.json
+    recording_url = data.get('recording_url')
+    
+    # Map the Nexmo data to our unified Postgres table
+    new_log = CommunicationLog(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num='Inbound Nexmo Call', 
+        content='Voicemail Recording Available',
+        recording_url=recording_url
+    )
+    
+    try:
+        db_pg.session.add(new_log)
+        db_pg.session.commit()
+    except Exception as e:
+        print(f"Postgres save failed: {e}")
+        db_pg.session.rollback()
 
-# This table stores both Twilio and Nexmo logs in one place
-class CommunicationLog(db_pg.Model):
-    id = db_pg.Column(db_pg.Integer, primary_key=True)
-    provider = db_pg.Column(db_pg.String(20)) # 'Twilio' or 'Nexmo'
-    direction = db_pg.Column(db_pg.String(20)) # 'Inbound' or 'Outbound'
-    from_number = db_pg.Column(db_pg.String(50))
-    to_number = db_pg.Column(db_pg.String(50))
-    body = db_pg.Column(db_pg.Text)           # SMS text or Call Status
-    recording_url = db_pg.Column(db_pg.Text)
-    timestamp = db_pg.Column(db_pg.DateTime, default=france_now)
+    # Note: Ensure you've defined your email sending logic here
+    # and replaced those old 'malicious.technology' URLs!
+    
+    return "", 204
 
+# 3. FAST ADMIN ROUTE (Querying Postgres instead of Twilio API)
+@app.route("/admin/history")
+@requires_auth
+def admin_history():
+    # Fetch latest 50 events from BOTH providers at once
+    logs = CommunicationLog.query.order_by(CommunicationLog.timestamp.desc()).limit(50).all()
+    
+    # Using a simple template to show both
+    return render_template_string("""
+        <h1>Unified History (Postgres)</h1>
+        {% for log in logs %}
+            <div style="border:1px solid #ccc; margin:10px; padding:10px; border-left: 5px solid {{ 'blue' if log.provider == 'Twilio' else 'green' }};">
+                <strong>{{ log.provider }} {{ log.comm_type }}</strong> - {{ log.timestamp }}<br>
+                From: {{ log.from_num }} | Content: {{ log.content }}<br>
+                {% if log.recording_url %}
+                    <audio controls src="{{ log.recording_url }}"></audio>
+                {% endif %}
+            </div>
+        {% endfor %}
+    """, logs=logs)
 # Create the tables (Run this once)
 with app.app_context():
     db_pg.create_all()
