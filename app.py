@@ -429,62 +429,70 @@ def admin_calls():
     html = TEMPLATE.replace("<body>", f"<body>{banner}", 1)
     return render_template_string(html, items=items)
 
-'''
-@app.route("/admin/calls")
-@requires_auth
-def admin_calls():
-    items = []
-    error_msg = None
+### NEXMO PHONE LINE ###
+# load environment variables
+WELCOME = os.getenv("WELCOME_OHGODVOTE")
+FRENCH = os.getenv("FRENCH_OHGODVOTE")
+ENGLISH = os.getenv("ENGLISH_OHGODVOTE")
+NEXMO_NUMBER = os.getenv("NEXMO_NUMBER")
 
+NEXMO_PRIVATE_KEY = os.getenv("NEXMO_PRIVATE_KEY")
+NEXMO_APPLICATION_ID = os.getenv("NEXMO_APPLICATION_ID")
+NEXMO_API_KEY = os.getenv("NEXMO_API_KEY")
+NEXMO_API_SECRET = os.getenv("NEXMO_API_SECRET")
+
+# Initialize the Nexmo client using the string directly
+# Note: The library is smart enough to handle the string if it looks like a key
+client = nexmo.Client(
+    application_id=NEXMO_APPLICATION_ID,
+    private_key=NEXMO_PRIVATE_KEY,
+)
+
+# Configure Postgres
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db_pg = SQLAlchemy(app)
+
+# This table stores both Twilio and Nexmo logs in one place
+class CommunicationLog(db_pg.Model):
+    id = db_pg.Column(db_pg.Integer, primary_key=True)
+    provider = db_pg.Column(db_pg.String(20)) # 'Twilio' or 'Nexmo'
+    direction = db_pg.Column(db_pg.String(20)) # 'Inbound' or 'Outbound'
+    from_number = db_pg.Column(db_pg.String(50))
+    to_number = db_pg.Column(db_pg.String(50))
+    body = db_pg.Column(db_pg.Text)           # SMS text or Call Status
+    recording_url = db_pg.Column(db_pg.Text)
+    timestamp = db_pg.Column(db_pg.DateTime, default=france_now)
+
+# Create the tables (Run this once)
+with app.app_context():
+    db_pg.create_all()
+
+@app.route("/new-recording", methods=["POST"])
+def new_recording():
+    data = request.json
+    recording_id = data.get('recording_uuid')
+    recording_url = data.get('recording_url')
+    
+    # In Postgres, we don't need a separate "Recordings" table if we 
+    # just want to log the event.
+    new_log = CommunicationLog(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num='Check Logs', # You can look this up via conversation_uuid if needed
+        content='New Voicemail Recorded',
+        recording_url=recording_url
+    )
+    
     try:
-        calls = twilio_client.calls.list(limit=10, page_size=10)
-
-        for c in calls:
-            from_number = get_from_number(c)
-            to_number   = getattr(c, 'to', None) or getattr(c, '_properties', {}).get('to')
-
-            recording_url = transcription_text = transcription_url = None
-
-            parent_sid = getattr(c, 'parent_call_sid', None) \
-                         or getattr(c, '_properties', {}).get('parent_call_sid')
-            base_sid = parent_sid or c.sid
-            recs = twilio_client.recordings.list(call_sid=base_sid, limit=1)
-            if recs:
-                rec = recs[0]
-                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Recordings/{rec.sid}.mp3" 
-
-                try:
-                    trans = twilio_client.recordings(rec.sid).transcriptions.list(limit=1)
-                    if trans:
-                        t = trans[0]
-                        transcription_text = t.transcription_text
-                        transcription_url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCT}/Transcriptions/{t.sid}.json"
-                except Exception:
-                    pass
-
-
-            items.append({
-                "sid": c.sid,
-                "start_time": c.start_time,
-                "from_": from_number,
-                "to": to_number,
-                "status": c.status,
-                "duration": c.duration,
-                "recording_url": recording_url,
-                "transcription_text": transcription_text,
-                "transcription_url": transcription_url,
-            })
-
-    except TwilioRestException as e:
-        error_msg = f"Twilio error {e.status} / {getattr(e, 'code', '?')}: {e.msg or 'unknown error'}"
+        db_pg.session.add(new_log)
+        db_pg.session.commit()
     except Exception as e:
-        error_msg = f"Unexpected error: {type(e).__name__}: {str(e)}"
+        print(f"Postgres save failed: {e}")
+        db_pg.session.rollback()
 
-    # Always render; include a banner if any error occurred for visibility.
-    banner = ""
-    if error_msg:
-        banner = f'<div style="padding:.75rem;background:#fff3cd;color:#664d03;border:1px solid #ffecb5;border-radius:6px;margin-bottom:1rem;"><strong>Note:</strong> {error_msg}</div>'
-
-    html = TEMPLATE.replace("<body>", f"<body>{banner}", 1)
-    return render_template_string(html, items=items)
-'''
+    # Continue with your existing Email/SendGrid logic...
+    # (Just make sure to update those malicious.technology URLs!)
+    
+    return "", 204
