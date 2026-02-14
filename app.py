@@ -550,3 +550,94 @@ def new_recording():
     # (Just make sure to update those malicious.technology URLs!)
     
     return "", 204
+
+
+@app.route("/answer", methods=["GET", "POST"])
+@csrf.exempt # Nexmo webhooks need CSRF exempt
+def nexmo_answer():
+    """Initial IVR Greeting"""
+    receive_numbers = request.url_root + "language"
+    return jsonify([
+        {"action": "stream", "streamUrl": [WELCOME], "bargeIn": True},
+        {"action": "input", "maxDigits": 1, "eventUrl": [receive_numbers]}
+    ])
+
+@app.route("/language", methods=["POST"])
+@csrf.exempt
+def nexmo_pick_language():
+    data = request.get_json()
+    digits = data.get('dtmf', '1')
+    them = data.get('from', 'unknown')
+    
+    # Logic from original app
+    if digits == "2":
+        route_url = request.url_root + "voicemail_french"
+        language = 'french'
+    else:
+        route_url = request.url_root + "voicemail_english"
+        language = 'english'
+
+    # Notify staff via SMS (using Nexmo)
+    try:
+        smsclient.send_message({
+            "from": NEXMO_NUMBER,
+            "to": choose_recipient(),
+            "text": f"VFA voter-help call from {them}. Language: {language}"
+        })
+    except: pass
+
+    return jsonify([
+        {
+            "action": "connect",
+            "eventType": "synchronous",
+            "eventUrl": [route_url],
+            "from": NEXMO_NUMBER,
+            "endpoint": [{"type":"phone", "number": choose_recipient()}]
+        }
+    ])
+
+@app.route("/new-recording", methods=["POST"])
+@csrf.exempt
+def nexmo_new_recording():
+    data = request.json
+    recording_url = data.get('recording_url')
+    
+    # SAVE TO SHARED POSTGRES
+    new_log = CommunicationLog(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num='Nexmo Voicemail',
+        content='New recording received',
+        recording_url=recording_url
+    )
+    db_pg.session.add(new_log)
+    db_pg.session.commit()
+
+    # ORIGINAL EMAIL LOGIC (Simplified to use your existing send_email)
+    subject = "New VFA Nexmo Voicemail"
+    html = f"<p>New voicemail recorded.</p><p>Listen here: <a href='{recording_url}'>Recording</a></p>"
+    send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
+    
+    return "", 204
+
+@app.route("/inbound-sms-nexmo", methods=["POST"])
+@csrf.exempt
+def nexmo_inbound_sms():
+    data = request.get_json()
+    msg = data.get('text', 'No text')
+    them = data.get('msisdn', 'Unknown')
+
+    # SAVE TO SHARED POSTGRES
+    new_log = CommunicationLog(
+        provider='Nexmo',
+        comm_type='SMS',
+        direction='Inbound',
+        from_num=them,
+        content=msg
+    )
+    db_pg.session.add(new_log)
+    db_pg.session.commit()
+
+    send_email(FROM_EMAIL, RECIPIENT_EMAILS, f"Nexmo SMS from {them}", f"Body: {msg}")
+    return "", 204
