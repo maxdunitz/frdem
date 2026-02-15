@@ -196,8 +196,17 @@ def receive_sms():
 @app.route("/receive_call", methods=['GET', 'POST'])
 @csrf.exempt
 def receive_call():
-    print("RECEIVE_CALL")
-    # Start our TwiML response
+    
+    new_log = CommunicationLog(
+        provider='Twilio',
+        comm_type='Call',
+        direction='Inbound',
+        from_num=request.form.get('From', 'Unknown'),
+        content='Call Started - In Menu'
+    )
+    db_pg.session.add(new_log)
+    db_pg.session.commit()
+    
     resp = VoiceResponse()
 
     # Read a message aloud to the caller
@@ -299,9 +308,19 @@ def send_transcription():
     except Exception as e:
         print(e, type(e))
         print(e.args)
+
+    new_log = CommunicationLog(
+        provider='Twilio',
+        comm_type='Call',
+        direction='Inbound',
+        from_num=from_number,
+        content=f"Voicemail: {transcription_text}",
+        recording_url=url_recording
+    )
+    db_pg.session.add(new_log)
+    db_pg.session.commit()
+    
     return str(message_body)
-
-
 
 
 #### DISPLAY LAST 10 CALLS IN PASSWORD-PROTECTED DEBUGGING SITE ####
