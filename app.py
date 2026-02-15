@@ -630,7 +630,7 @@ def nexmo_pick_language():
     recipient = choose_recipient()
     
     try:
-        smsclient.send_message({
+        client.send_message({
             "from": NEXMO_NUMBER,
             "to": recipient,
             "text": f"VFA voter-help call from {them}. Language: {language}"
@@ -669,7 +669,56 @@ def nexmo_new_recording():
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
+@app.route("/voicemail_english", methods=["POST"])
+@csrf.exempt
+def voicemail_english(): 
+    print("Nexmo: Entering English Voicemail")
+    newrecording = request.url_root + "new-recording"
+    
+    return jsonify([
+        {
+            "action": "stream",
+            "streamUrl": [ENGLISH]
+        },
+        {
+            "action": "record",
+            "beepStart": True,
+            "eventUrl": [newrecording],
+            "endOnSilence": 3,
+            "format": "mp3"
+        },
+        {
+            "action": "talk",
+            "text": "Thank you for your message. Goodbye.",
+            "style": 0 # Standard voice
+        }
+    ])
 
+@app.route("/voicemail_french", methods=["POST"])
+@csrf.exempt
+def voicemail_french():
+    print("Nexmo: Entering French Voicemail")
+    newrecording = request.url_root + "new-recording"
+    
+    return jsonify([
+        {
+            "action": "stream",
+            "streamUrl": [FRENCH]
+        },
+        {
+            "action": "record",
+            "beepStart": True,
+            "eventUrl": [newrecording],
+            "endOnSilence": 3,
+            "format": "mp3"
+        },
+        {
+            "action": "talk",
+            "text": "Merci pour votre message. Au revoir.",
+            "language": "fr-FR",
+            "style": 0
+        }
+    ])
 @app.route("/inbound-sms", methods=["POST"])
 @csrf.exempt
 def nexmo_inbound_sms():
