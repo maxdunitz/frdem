@@ -527,8 +527,8 @@ def admin_history():
 with app.app_context():
     db_pg.create_all()
 
-@app.route("/new-recording", methods=["POST"])
-def new_recording():
+@app.route("/new-recording-nexmo", methods=["POST"])
+def new_recording_nexmo():
     data = request.json
     recording_id = data.get('recording_uuid')
     recording_url = data.get('recording_url')
