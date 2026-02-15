@@ -1,4 +1,4 @@
-from flask import Flask, request, flash, url_for, send_file, session, redirect, Response, render_template_string
+from flask import Flask, request, flash, url_for, send_file, session, redirect, Response, render_template_string, jsonify
 from twilio import twiml
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.twiml.voice_response import VoiceResponse, Dial, Say, Play, Gather
@@ -64,14 +64,18 @@ def france_now():
 def is_business_hours():
     return france_now().hour >= 10 and france_now().hour <= 21
 
-def whomst_to_call(req, lang):
-    recipients = [RECIPIENT1, RECIPIENT2, RECIPIENT3, RECIPIENT4]
+recipients = [RECIPIENT1, RECIPIENT2, RECIPIENT3, RECIPIENT4]
+def whomst_to_call(req, lang): # FRDEM
     if req == '1': # voting, english or french
         return random.choice(recipients)
     elif req == '2': # general, english or french
         return random.choice(recipients)
     elif req == '3': # press inquiries, english or french
         return RECIPIENT_MEDIA
+
+def choose_recipient(): # VFA
+    numbers = [r[1:] for r in recipients]
+    return random.choice(numbers)
 
 def get_help_type(choice):
     if choice == '1':
@@ -160,20 +164,31 @@ def send_email(f, t, subject, html):
         print(e.args)
 
 
-###################### ROUTES #########################
+###################### TWILIO ROUTES #########################
 
-
-## RECEIVE SMS ##
 @app.route("/receive_sms", methods=['GET', 'POST'])
 @csrf.exempt
 def receive_sms():
-    ## GET INCOMING INFO ##
-    msg = request.form['Body'] # THE TEXT ITSELF
-    number = request.form['From'] # THE SENDER'S NUMBER
-    to = request.form['To'] # THE INCOMING NUMBER
+    msg = request.form['Body']
+    number = request.form['From']
+    to = request.form['To']
+    
+    # SAVE TO POSTGRES
+    new_log = CommunicationLog(
+        provider='Twilio',
+        comm_type='SMS',
+        direction='Inbound',
+        from_num=number,
+        to_num=to,
+        content=msg
+    )
+    db_pg.session.add(new_log)
+    db_pg.session.commit()
+
+    # Continue with email...
     now = france_now()
-    subject = f"Incoming SMS from {number} @ {now.isoformat()}"
-    html = f"<p>To: {to}</p><p>From: {number}</p><p>Body: {msg}</p>"
+    subject = f"Incoming SMS from {number}"
+    html = f"<p>From: {number}</p><p>Body: {msg}</p>"
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     return str(MessagingResponse())
 
@@ -476,33 +491,6 @@ client = nexmo.Client(
     private_key=io.StringIO(NEXMO_PRIVATE_KEY),
 )
 
-@app.route("/new-recording", methods=["POST"])
-def new_recording():
-    data = request.json
-    recording_url = data.get('recording_url')
-    
-    # Map the Nexmo data to our unified Postgres table
-    new_log = CommunicationLog(
-        provider='Nexmo',
-        comm_type='Call',
-        direction='Inbound',
-        from_num='Inbound Nexmo Call', 
-        content='Voicemail Recording Available',
-        recording_url=recording_url
-    )
-    
-    try:
-        db_pg.session.add(new_log)
-        db_pg.session.commit()
-    except Exception as e:
-        print(f"Postgres save failed: {e}")
-        db_pg.session.rollback()
-
-    # Note: Ensure you've defined your email sending logic here
-    # and replaced those old 'malicious.technology' URLs!
-    
-    return "", 204
-
 # 3. FAST ADMIN ROUTE (Querying Postgres instead of Twilio API)
 @app.route("/admin/history")
 @requires_auth
@@ -527,9 +515,6 @@ def admin_history():
 with app.app_context():
     db_pg.create_all()
 
-
-
-
 @app.route("/answer", methods=["GET", "POST"])
 @csrf.exempt # Nexmo webhooks need CSRF exempt
 def nexmo_answer():
@@ -547,7 +532,6 @@ def nexmo_pick_language():
     digits = data.get('dtmf', '1')
     them = data.get('from', 'unknown')
     
-    # Logic from original app
     if digits == "2":
         route_url = request.url_root + "voicemail_french"
         language = 'french'
@@ -555,11 +539,12 @@ def nexmo_pick_language():
         route_url = request.url_root + "voicemail_english"
         language = 'english'
 
-    # Notify staff via SMS (using Nexmo)
+    recipient = choose_recipient()
+    
     try:
         smsclient.send_message({
             "from": NEXMO_NUMBER,
-            "to": choose_recipient(),
+            "to": recipient,
             "text": f"VFA voter-help call from {them}. Language: {language}"
         })
     except: pass
@@ -570,7 +555,7 @@ def nexmo_pick_language():
             "eventType": "synchronous",
             "eventUrl": [route_url],
             "from": NEXMO_NUMBER,
-            "endpoint": [{"type":"phone", "number": choose_recipient()}]
+            "endpoint": [{"type":"phone", "number": recipient}]
         }
     ])
 
@@ -580,7 +565,6 @@ def nexmo_new_recording():
     data = request.json
     recording_url = data.get('recording_url')
     
-    # SAVE TO SHARED POSTGRES
     new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
@@ -592,14 +576,13 @@ def nexmo_new_recording():
     db_pg.session.add(new_log)
     db_pg.session.commit()
 
-    # ORIGINAL EMAIL LOGIC (Simplified to use your existing send_email)
     subject = "New VFA Nexmo Voicemail"
     html = f"<p>New voicemail recorded.</p><p>Listen here: <a href='{recording_url}'>Recording</a></p>"
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
 
-@app.route("/inbound-sms-nexmo", methods=["POST"])
+@app.route("/inbound-sms", methods=["POST"])
 @csrf.exempt
 def nexmo_inbound_sms():
     data = request.get_json()
