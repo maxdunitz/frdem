@@ -11,6 +11,7 @@ from dotenv import load_dotenv, find_dotenv
 from authlib.integrations.flask_client import OAuth
 import random
 import resend
+import io
 from zoneinfo import ZoneInfo
 from twilio.http.http_client import TwilioHttpClient
 from twilio.base.exceptions import TwilioRestException
@@ -472,7 +473,7 @@ NEXMO_API_SECRET = os.getenv("NEXMO_API_SECRET")
 # Note: The library is smart enough to handle the string if it looks like a key
 client = nexmo.Client(
     application_id=NEXMO_APPLICATION_ID,
-    private_key=NEXMO_PRIVATE_KEY,
+    private_key=io.StringIO(NEXMO_PRIVATE_KEY),
 )
 
 @app.route("/new-recording", methods=["POST"])
