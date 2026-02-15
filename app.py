@@ -527,34 +527,7 @@ def admin_history():
 with app.app_context():
     db_pg.create_all()
 
-@app.route("/new-recording-nexmo", methods=["POST"])
-def new_recording_nexmo():
-    data = request.json
-    recording_id = data.get('recording_uuid')
-    recording_url = data.get('recording_url')
-    
-    # In Postgres, we don't need a separate "Recordings" table if we 
-    # just want to log the event.
-    new_log = CommunicationLog(
-        provider='Nexmo',
-        comm_type='Call',
-        direction='Inbound',
-        from_num='Check Logs', # You can look this up via conversation_uuid if needed
-        content='New Voicemail Recorded',
-        recording_url=recording_url
-    )
-    
-    try:
-        db_pg.session.add(new_log)
-        db_pg.session.commit()
-    except Exception as e:
-        print(f"Postgres save failed: {e}")
-        db_pg.session.rollback()
 
-    # Continue with your existing Email/SendGrid logic...
-    # (Just make sure to update those malicious.technology URLs!)
-    
-    return "", 204
 
 
 @app.route("/answer", methods=["GET", "POST"])
