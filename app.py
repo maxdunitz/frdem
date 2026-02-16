@@ -547,35 +547,36 @@ def admin_history():
 </head>
 <body>
     <div class="log-container">
-        <h1>Unified History</h1>
-        {% for log in logs %}
-        <div class="card {{ log.provider|lower }}">
-            <div>
-                <div class="from-num">From: {{ log.from_num }}</div>
-                <div class="meta">
-                    <strong>{{ log.provider }}</strong> | {{ log.comm_type }} 
-                    {% if log.to_num %}| To: {{ log.to_num }}{% endif %}
-                </div>
-                <div class="content">{{ log.content }}</div>
-                {% if log.recording_url %}
-                    <audio controls src="{{ log.recording_url }}"></audio>
-                {% endif %}
-
-                {% if log.recording_url %}
-                    {% if log.provider == 'Nexmo' %}
-                        <audio controls src="/play_nexmo?url={{ log.recording_url }}"></audio>
-                    {% else %}
-                        <audio controls src="{{ log.recording_url }}"></audio>
-                    {% endif %}
-                {% endif %}
-
-            </div>
-            <div class="time">
-                {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
-                {{ log.timestamp.strftime('%H:%M:%S') }}
-            </div>
+        <h1>Unified VFA/FRDEM History</h1>
+# Inside your admin_history template...
+{% for log in logs %}
+<div class="card {{ log.provider|lower }}">
+    <div style="flex-grow: 1;">
+        <div class="from-num">From: {{ log.from_num }}</div>
+        <div class="meta">
+            <strong>{{ log.provider }}</strong> | {{ log.comm_type }} 
         </div>
-        {% endfor %}
+        <div class="content">{{ log.content }}</div>
+        
+        {% if log.recording_url %}
+            {% set play_url = "/play_nexmo?url=" + log.recording_url if log.provider == 'Nexmo' else log.recording_url %}
+            
+            <audio controls src="{{ play_url }}" style="margin-top:10px;"></audio>
+            
+            <div style="margin-top: 10px;">
+                <a href="{{ play_url }}{{ '&download=true' if log.provider == 'Nexmo' else '' }}" 
+                   class="btn" style="text-decoration:none; font-size: 0.8rem; background: #eee; padding: 4px 8px; border-radius: 4px; color: #333; border: 1px solid #ccc;">
+                   Direct Download ↓
+                </a>
+            </div>
+        {% endif %}
+    </div>
+    <div class="time">
+        {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
+        {{ log.timestamp.strftime('%H:%M:%S') }}
+    </div>
+</div>
+{% endfor %}
     </div>
 </body>
 </html>
@@ -630,15 +631,22 @@ def nexmo_pick_language():
 @requires_auth
 def play_nexmo():
     recording_url = request.args.get('url')
+    download = request.args.get('download', 'false').lower() == 'true'
+    
     if not recording_url:
         return "No URL provided", 400
 
-    # Nexmo requires JWT or Basic Auth for file downloads. 
-    # Using Basic Auth with API Key/Secret is the simplest way:
+    # Fetch the file from Nexmo using your API credentials
     response = requests.get(recording_url, auth=(NEXMO_API_KEY, NEXMO_API_SECRET), stream=True)
     
     if response.status_code == 200:
-        return Response(response.content, content_type="audio/mpeg")
+        headers = {"Content-Type": "audio/mpeg"}
+        if download:
+            # This forces the browser to download the file with a clean name
+            filename = f"voicemail_{int(time.time())}.mp3"
+            headers["Content-Disposition"] = f"attachment; filename={filename}"
+            
+        return Response(response.content, headers=headers)
     else:
         return f"Failed to fetch recording: {response.status_code}", 500
 
@@ -648,7 +656,9 @@ def nexmo_new_recording():
     data = request.json
     recording_url = data.get('recording_url')
     # Nexmo sends the caller's number in the 'from' field of the recording webhook
-    from_num = data.get('from') or "Unknown Caller"
+    from_num = data.get('from') or data.get('msisdn') or data.get('external_id') or "Unknown Caller"
+    if from_num.startswith('33'): # If it's French format without the +
+        from_num = '+' + from_num
 
     if not recording_url:
         return "", 204
