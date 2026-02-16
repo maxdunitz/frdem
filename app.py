@@ -548,7 +548,6 @@ def admin_history():
 <body>
     <div class="log-container">
         <h1>Unified VFA/FRDEM History</h1>
-# Inside your admin_history template...
 {% for log in logs %}
 <div class="card {{ log.provider|lower }}">
     <div style="flex-grow: 1;">
