@@ -691,7 +691,7 @@ def nexmo_new_recording():
     if not recording_url:
         return "", 204
 
-new_log = CommunicationLog(
+    new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
