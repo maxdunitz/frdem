@@ -618,23 +618,34 @@ def nexmo_pick_language():
 def nexmo_new_recording():
     data = request.json
     recording_url = data.get('recording_url')
-    
+    # Nexmo usually provides 'from' or 'msisdn' for the caller's number
+    from_number = data.get('from') or data.get('msisdn') or "Nexmo Voicemail"
+
+    # CRITICAL: Only log if there is a recording URL
+    # This prevents the 4 duplicate rows and 4 duplicate emails
+    if not recording_url:
+        print("Nexmo: Received status update without recording. Skipping log.")
+        return "", 204
+
+    # SAVE TO SHARED POSTGRES
     new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
-        from_num='Nexmo Voicemail',
+        from_num=from_number, # Now capturing the actual caller number
         content='New recording received',
         recording_url=recording_url
     )
     db_pg.session.add(new_log)
     db_pg.session.commit()
 
-    subject = "New VFA Nexmo Voicemail"
-    html = f"<p>New voicemail recorded.</p><p>Listen here: <a href='{recording_url}'>Recording</a></p>"
+    # EMAIL LOGIC
+    subject = f"New VFA Nexmo Voicemail from {from_number}"
+    html = f"<p>New voicemail from <b>{from_number}</b>.</p><p>Listen here: <a href='{recording_url}'>Recording</a></p>"
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
+
 @app.route("/voicemail_english", methods=["POST"])
 @csrf.exempt
 def voicemail_english(): 
