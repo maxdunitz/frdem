@@ -559,22 +559,15 @@ def admin_history():
     <div style="flex-grow: 1;">
         <div class="from-num">From: {{ log.from_num }}</div>
         <div class="meta">
-            <strong>{{ log.provider }}</strong> | {{ log.comm_type }} 
+            <strong>{{ log.provider }}</strong> | {{ log.comm_type }} | 
+            <span style="color: #2c5282;">To: {{ log.to_num }}</span>
         </div>
         <div class="content">{{ log.content }}</div>
         
+        <div style="font-size: 0.7rem; color: #aaa; margin-top: 5px;">ID: {{ log.sid }}</div>
+        
         {% if log.recording_url %}
-            {% set play_url = "/play_nexmo?url=" + log.recording_url if log.provider == 'Nexmo' else log.recording_url %}
-            
-            <audio controls src="{{ play_url }}" style="margin-top:10px;"></audio>
-            
-            <div style="margin-top: 10px;">
-                <a href="{{ play_url }}{{ '&download=true' if log.provider == 'Nexmo' else '' }}" 
-                   class="btn" style="text-decoration:none; font-size: 0.8rem; background: #eee; padding: 4px 8px; border-radius: 4px; color: #333; border: 1px solid #ccc;">
-                   Direct Download ↓
-                </a>
-            </div>
-        {% endif %}
+            {% endif %}
     </div>
     <div class="time">
         {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
@@ -613,6 +606,8 @@ def nexmo_pick_language():
         route_url = request.url_root + "voicemail_english"
         language = 'english'
 
+    recipient = choose_recipient()
+
     new_call = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
@@ -620,12 +615,10 @@ def nexmo_pick_language():
         from_num=them,
         to_num=NEXMO_NUMBER,
         sid=conv_id,      
-        content=f"Call routing to {language}"
+        content=f"VFA call routing in {language}. Sent to {recipient}."
     )
     db_pg.session.add(new_call)
     db_pg.session.commit()
-
-    recipient = choose_recipient()
     
     try:
         client.send_message({
