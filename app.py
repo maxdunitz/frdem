@@ -293,7 +293,7 @@ def end_call_french():
         resp.play(VOICEMAIL_ENGLISH_URL)
     elif language == 'french':
         resp.play(VOICEMAIL_FRENCH_URL)
-    resp.record(max_length="60", transcribe=True, action="/postscript", transcribe_callback="/send_transcription")
+    resp.record(max_length="60", transcribe=True, action="/postscript", recording_status_callback="/handle_recording_status", transcribe_callback="/send_transcription")
     resp.redirect("/postscript")
     return str(resp)
 
@@ -309,6 +309,28 @@ def end_call():
     resp.hangup()
     return str(resp)
 
+@app.route("/handle_recording_status", methods=["POST"])
+@csrf.exempt
+def handle_recording_status():
+    url_recording = request.form.get('RecordingUrl')
+    from_number = request.form.get('From', 'Unknown')
+    call_sid = request.form.get('CallSid')
+    status = request.form.get('RecordingStatus')
+
+    if status == 'completed' and url_recording:
+
+        subject = f"NEW VOICEMAIL FROM {from_number} TO DA FRANCE"
+        html = f"""
+            <h3>New Voicemail Received</h3>
+            <p><strong>From:</strong> {from_number}</p>
+            <p><a href="{url_recording}">Listen to Recording</a></p>
+        """
+        send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
+
+    return "OK", 200
+
+
+
 @app.route("/send_transcription", methods=["POST"])
 @csrf.exempt
 def send_transcription():
@@ -322,7 +344,7 @@ def send_transcription():
         print("Transcription not ready or failed.")
         return "OK", 200
 
-    message_body = f'''<h1>NEW VOICEMAIL TO DA FRANCE</h1>
+    message_body = f'''<h1>NEW VOICEMAIL TRANSCRIPTION FROM {from_number} TO DA FRANCE</h1>
                        <br>
                        <p>MACHINE TRANSCRIPTION: {transcription_text}</p>
                        <br>
@@ -603,7 +625,7 @@ def admin_history():
 @csrf.exempt 
 def nexmo_answer():
     """Initial IVR Greeting"""
-    receive_numbers = request.url_root + "language"
+    receive_numbers = f"{request.url_root.rstrip('/')}language"
     return jsonify([
         {"action": "stream", "streamUrl": [WELCOME], "bargeIn": True},
         {"action": "input", "maxDigits": 1, "eventUrl": [receive_numbers]}
@@ -618,10 +640,10 @@ def nexmo_pick_language():
     conv_id = data.get('conversation_uuid')
 
     if digits == "2":
-        route_url = request.url_root + "voicemail_french"
+        route_url = f"{request.url_root.rstrip('/')}voicemail_french"
         language = 'french'
     else:
-        route_url = request.url_root + "voicemail_english"
+        route_url = f"{request.url_root.rstrip('/')}voicemail_english"
         language = 'english'
 
     recipient = choose_recipient()
@@ -663,7 +685,7 @@ def nexmo_pick_language():
             {
                 "action": "record",
                 "beepStart": True,
-                "eventUrl": [request.url_root + "new-recording"],
+                "eventUrl": [f"{request.url_root.rstrip('/')}new-recording"],
                 "endOnSilence": 3
             }
     ])
@@ -718,7 +740,7 @@ def nexmo_new_recording():
     db_pg.session.add(new_log)
     db_pg.session.commit()
 
-    proxy_link = f"{request.url_root}play_nexmo?url={recording_url}"
+    proxy_link = f"{request.url_root.rstrip('/')}play_nexmo?url={recording_url}"
     
     subject = f"New VFA Nexmo Voicemail from {caller_id}"
     html = f"<p>Voicemail from: {caller_id}</p><p><a href='{proxy_link}'>CLICK HERE TO LISTEN TO RECORDING</a></p>"
@@ -739,7 +761,7 @@ def nexmo_status():
 @csrf.exempt
 def voicemail_english(): 
     print("Nexmo: Entering English Voicemail")
-    newrecording = request.url_root + "new-recording"
+    newrecording = f"{request.url_root.rstrip('/')}new-recording"
     
     return jsonify([
         {
@@ -764,7 +786,7 @@ def voicemail_english():
 @csrf.exempt
 def voicemail_french():
     print("Nexmo: Entering French Voicemail")
-    newrecording = request.url_root + "new-recording"
+    newrecording = f"{request.url_root.rstrip("/")}new-recording"
     
     return jsonify([
         {
