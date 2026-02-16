@@ -606,6 +606,13 @@ def nexmo_pick_language():
     them = data.get('from', 'unknown')
     conv_id = data.get('conversation_uuid')
 
+    if digits == "2":
+        route_url = request.url_root + "voicemail_french"
+        language = 'french'
+    else:
+        route_url = request.url_root + "voicemail_english"
+        language = 'english'
+
     new_call = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
@@ -618,13 +625,6 @@ def nexmo_pick_language():
     db_pg.session.add(new_call)
     db_pg.session.commit()
 
-    if digits == "2":
-        route_url = request.url_root + "voicemail_french"
-        language = 'french'
-    else:
-        route_url = request.url_root + "voicemail_english"
-        language = 'english'
-
     recipient = choose_recipient()
     
     try:
@@ -636,17 +636,6 @@ def nexmo_pick_language():
     except: 
         print("text failed", NEXMO_NUMBER, recipient)
 
-    new_call = CommunicationLog(
-        provider='Nexmo',
-        comm_type='Call',
-        direction='Inbound',
-        from_num=them,
-        to_num=NEXMO_NUMBER,
-        content=f"Call routing to {language}",
-        recording_url=conv_id # We use this field temporarily to link to the recording later
-    )
-    db_pg.session.add(new_call)
-    db_pg.session.commit()
 
     return jsonify([
         {
