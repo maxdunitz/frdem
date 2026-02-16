@@ -208,7 +208,7 @@ def receive_call():
     from_num = request.form.get('From', 'Unknown')
     to_num = request.form.get('To', CALLER_ID) # Your Twilio Number
 
-     new_log = CommunicationLog(
+    new_log = CommunicationLog(
         provider='Twilio',
         comm_type='Call',
         direction='Inbound',
