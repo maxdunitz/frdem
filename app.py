@@ -60,6 +60,17 @@ FDR_URL = os.environ['FDR_URL']
 def france_now():
     return datetime.datetime.now(ZoneInfo("Europe/Paris")) 
 
+def format_paris_time(utc_dt):
+    if not utc_dt:
+        return ""
+    # 1. Ensure the datetime knows it is UTC
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=ZoneInfo("UTC"))
+    
+    # 2. Convert to Europe/Paris (handles DST automatically!)
+    paris_tz = ZoneInfo("Europe/Paris")
+    return utc_dt.astimezone(paris_tz)
+
 ## CALL HANDLING ##
 def is_business_hours():
     return france_now().hour >= 10 and france_now().hour <= 21
@@ -116,6 +127,7 @@ app = Flask(__name__)
 csrf = CSRFProtect(app)
 app.secret_key = SECRET_KEY
 
+app.jinja_env.filters['paris_time'] = format_paris_time
 
 # Configure Postgres
 uri = os.getenv("DATABASE_URL")
@@ -575,10 +587,11 @@ def admin_history():
         {% endif %}
         
         </div>
-    <div class="time">
-        {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
-        {{ log.timestamp.strftime('%H:%M:%S') }}
-    </div>
+<div class="time">
+    {% set local_time = log.timestamp | paris_time %}
+    {{ local_time.strftime('%Y-%m-%d') }}<br>
+    {{ local_time.strftime('%H:%M:%S') }}
+</div>
 </div>
 {% endfor %}
     </div>
