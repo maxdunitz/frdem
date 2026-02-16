@@ -123,6 +123,10 @@ if uri and uri.startswith("postgres://"):
     uri = uri.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = uri
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_recycle": 280,  # Recycle connections every 4-5 minutes
+    "pool_pre_ping": True, # Check if the connection is alive before using it
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db_pg = SQLAlchemy(app)
 
