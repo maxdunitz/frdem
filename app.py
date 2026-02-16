@@ -652,6 +652,8 @@ def nexmo_pick_language():
             "action": "connect",
             "timeout": "20",  # Give the volunteer 20 seconds to pick up
             "from": NEXMO_NUMBER.lstrip('+'),
+            "eventType": "synchronous",  
+            "eventUrl": [f"{request.url_root}nexmo-status"], 
             "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
         },
         {
@@ -725,6 +727,14 @@ def nexmo_new_recording():
     
     return "", 204
 
+@app.route("/nexmo-status", methods=["POST"])
+@csrf.exempt
+def nexmo_status():
+    data = request.get_json()
+    print(f"CALL STATUS UPDATE: {data.get('status')} for {data.get('to')}")
+    if data.get('status') == 'failed':
+        print(f"REASON: {data.get('detail')}")
+    return "", 204
 
 @app.route("/voicemail_english", methods=["POST"])
 @csrf.exempt
