@@ -204,12 +204,17 @@ def receive_sms():
 @app.route("/receive_call", methods=['GET', 'POST'])
 @csrf.exempt
 def receive_call():
-    
-    new_log = CommunicationLog(
+    call_sid = request.form.get('CallSid')
+    from_num = request.form.get('From', 'Unknown')
+    to_num = request.form.get('To', CALLER_ID) # Your Twilio Number
+
+     new_log = CommunicationLog(
         provider='Twilio',
         comm_type='Call',
         direction='Inbound',
-        from_num=request.form.get('From', 'Unknown'),
+        from_num=from_num,
+        to_num=to_num,
+        sid=call_sid,             # Store the link!
         content='Call Started - In Menu'
     )
     db_pg.session.add(new_log)
@@ -600,7 +605,19 @@ def nexmo_pick_language():
     digits = data.get('dtmf', '1')
     them = data.get('from', 'unknown')
     conv_id = data.get('conversation_uuid')
-    
+
+    new_call = CommunicationLog(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num=them,
+        to_num=NEXMO_NUMBER,
+        sid=conv_id,      
+        content=f"Call routing to {language}"
+    )
+    db_pg.session.add(new_call)
+    db_pg.session.commit()
+
     if digits == "2":
         route_url = request.url_root + "voicemail_french"
         language = 'french'
