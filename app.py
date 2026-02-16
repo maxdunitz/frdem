@@ -656,6 +656,16 @@ def nexmo_pick_language():
             "eventUrl": [route_url],
             "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
         },
+            {
+                "action": "stream",
+                "streamUrl": [ENGLISH] if language == 'english' else [FRENCH]
+            },
+            {
+                "action": "record",
+                "beepStart": True,
+                "eventUrl": [request.url_root + "new-recording"],
+                "endOnSilence": 3
+            }
     ])
     
 @app.route("/play_nexmo")
