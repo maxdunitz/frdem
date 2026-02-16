@@ -142,6 +142,7 @@ class CommunicationLog(db_pg.Model):
     to_num = db_pg.Column(db_pg.String(50))
     content = db_pg.Column(db_pg.Text)            # SMS text or Status
     recording_url = db_pg.Column(db_pg.Text)
+    sid = db_pg.Column(db_pg.String(100))         # Store Twilio CallSid or Nexmo UUID here
     timestamp = db_pg.Column(db_pg.DateTime, default=france_now)
 
 # Initialize database
@@ -618,7 +619,6 @@ def nexmo_pick_language():
     except: 
         print("text failed", NEXMO_NUMBER, recipient)
 
-
     new_call = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
@@ -687,9 +687,9 @@ def nexmo_new_recording():
     db_pg.session.commit()
 
     proxy_link = f"{request.url_root}play_nexmo?url={recording_url}"
-
-    subject = f"New VFA Nexmo Voicemail from {from_num}"
-    html = f"<p>Voicemail from: {from_num}</p><p><a href='{proxy_link}'>CLICK HERE TO LISTEN TO RECORDING</a></p>"
+    
+    subject = f"New VFA Nexmo Voicemail from {caller_id}"
+    html = f"<p>Voicemail from: {caller_id}</p><p><a href='{proxy_link}'>CLICK HERE TO LISTEN TO RECORDING</a></p>"
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
