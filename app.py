@@ -560,6 +560,15 @@ def admin_history():
                 {% if log.recording_url %}
                     <audio controls src="{{ log.recording_url }}"></audio>
                 {% endif %}
+
+                {% if log.recording_url %}
+                    {% if log.provider == 'Nexmo' %}
+                        <audio controls src="/play_nexmo?url={{ log.recording_url }}"></audio>
+                    {% else %}
+                        <audio controls src="{{ log.recording_url }}"></audio>
+                    {% endif %}
+                {% endif %}
+
             </div>
             <div class="time">
                 {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
@@ -617,35 +626,51 @@ def nexmo_pick_language():
         }
     ])
 
+@app.route("/play_nexmo")
+@requires_auth
+def play_nexmo():
+    recording_url = request.args.get('url')
+    if not recording_url:
+        return "No URL provided", 400
+
+    # Nexmo requires JWT or Basic Auth for file downloads. 
+    # Using Basic Auth with API Key/Secret is the simplest way:
+    response = requests.get(recording_url, auth=(NEXMO_API_KEY, NEXMO_API_SECRET), stream=True)
+    
+    if response.status_code == 200:
+        return Response(response.content, content_type="audio/mpeg")
+    else:
+        return f"Failed to fetch recording: {response.status_code}", 500
+
 @app.route("/new-recording", methods=["POST"])
 @csrf.exempt
 def nexmo_new_recording():
     data = request.json
     recording_url = data.get('recording_url')
-    # Nexmo usually provides 'from' or 'msisdn' for the caller's number
-    from_number = data.get('from') or data.get('msisdn') or "Nexmo Voicemail"
+    # Nexmo sends the caller's number in the 'from' field of the recording webhook
+    from_num = data.get('from') or "Unknown Caller"
 
-    # CRITICAL: Only log if there is a recording URL
-    # This prevents the 4 duplicate rows and 4 duplicate emails
     if not recording_url:
-        print("Nexmo: Received status update without recording. Skipping log.")
         return "", 204
 
-    # SAVE TO SHARED POSTGRES
+    # SAVE TO POSTGRES
     new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
-        from_num=from_number, # Now capturing the actual caller number
-        content='New recording received',
-        recording_url=recording_url
+        from_num=from_num,
+        content='New Voicemail',
+        recording_url=recording_url # We keep the raw URL here for the proxy to use
     )
     db_pg.session.add(new_log)
     db_pg.session.commit()
 
-    # EMAIL LOGIC
-    subject = f"New VFA Nexmo Voicemail from {from_number}"
-    html = f"<p>New voicemail from <b>{from_number}</b>.</p><p>Listen here: <a href='{recording_url}'>Recording</a></p>"
+    # Create a link that points to YOUR app's proxy route
+    # This ensures the link in the email actually works
+    proxy_link = f"{request.url_root}play_nexmo?url={recording_url}"
+
+    subject = f"New VFA Nexmo Voicemail from {from_num}"
+    html = f"<p>Voicemail from: {from_num}</p><p><a href='{proxy_link}'>CLICK HERE TO LISTEN TO RECORDING</a></p>"
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
