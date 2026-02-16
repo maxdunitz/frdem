@@ -120,7 +120,6 @@ def correct_number(s):
 
 ###################### SET UP FLASK APP #########################
 
-
 ## CONFIGURE APP ##
 
 app = Flask(__name__)
@@ -693,6 +692,23 @@ def play_nexmo():
     else:
         return f"Failed to fetch recording: {response.status_code}", 500
 
+@app.route("/answer")
+def nexmo_answer():
+    # This bypasses the menu and just dials the volunteer immediately
+    recipient = choose_recipient()
+    return jsonify([
+        {
+            "action": "talk",
+            "text": "Connecting your call."
+        },
+        {
+            "action": "connect",
+            "from": NEXMO_NUMBER.lstrip('+'),
+            "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
+        }
+    ])
+    
+'''
 @app.route("/new-recording", methods=["POST"])
 @csrf.exempt
 def nexmo_new_recording():
@@ -726,6 +742,7 @@ def nexmo_new_recording():
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
+'''
 
 @app.route("/nexmo-status", methods=["POST"])
 @csrf.exempt
