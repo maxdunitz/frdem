@@ -567,8 +567,14 @@ def admin_history():
         <div style="font-size: 0.7rem; color: #aaa; margin-top: 5px;">ID: {{ log.sid }}</div>
         
         {% if log.recording_url %}
-            {% endif %}
-    </div>
+            {% set play_url = "/play_nexmo?url=" + log.recording_url if log.provider == 'Nexmo' else log.recording_url %}
+            <audio controls src="{{ play_url }}" style="margin-top:10px;"></audio>
+            <div style="margin-top: 5px;">
+                <a href="{{ play_url }}" target="_blank" style="font-size: 0.8rem; color: #0077ff;">Open Recording</a>
+            </div>
+        {% endif %}
+        
+        </div>
     <div class="time">
         {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
         {{ log.timestamp.strftime('%H:%M:%S') }}
@@ -579,7 +585,6 @@ def admin_history():
 </body>
 </html>
     """, logs=logs)
-
 
 @app.route("/answer", methods=["GET", "POST"])
 @csrf.exempt # Nexmo webhooks need CSRF exempt
@@ -681,16 +686,20 @@ def nexmo_new_recording():
     recording_url = data.get('recording_url')
     original_call = CommunicationLog.query.filter_by(sid=conv_id).first()
     caller_id = original_call.from_num if original_call else "Unknown Caller"
+    to_num = original_call.to_num if original_call else NEXMO_NUMBER
+
     if not recording_url:
         return "", 204
 
-    new_log = CommunicationLog(
+new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
         from_num=caller_id,
+        to_num=to_num,
+        sid=conv_id,                # SAVE THIS so it doesn't show as None!
         content='New Voicemail',
-        recording_url=recording_url # We keep the raw URL here for the proxy to use
+        recording_url=recording_url 
     )
     db_pg.session.add(new_log)
     db_pg.session.commit()
