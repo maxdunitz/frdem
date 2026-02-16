@@ -636,17 +636,27 @@ def nexmo_pick_language():
     except: 
         print("text failed", NEXMO_NUMBER, recipient)
 
-
     return jsonify([
         {
             "action": "connect",
-            "eventType": "synchronous",
-            "eventUrl": [route_url],
+            "timeout": "20",  # Give the volunteer 20 seconds to pick up
             "from": NEXMO_NUMBER,
-            "endpoint": [{"type":"phone", "number": recipient}]
+            "endpoint": [{"type": "phone", "number": recipient}]
+        },
+        {
+            # This ONLY runs if the 'connect' above fails or times out
+            "action": "talk",
+            "text": "Please wait while we transfer you to voicemail." if language == 'english' else "Veuillez patienter, nous vous transférons vers la messagerie.",
+            "language": "en-US" if language == 'english' else "fr-FR"
+        },
+        {
+            # This redirects the call flow to the actual recording logic
+            "action": "talk", 
+            "text": "Redirecting", 
+            "voiceName": "Kimberly"
         }
     ])
-
+    
 @app.route("/play_nexmo")
 @requires_auth
 def play_nexmo():
@@ -676,7 +686,7 @@ def nexmo_new_recording():
     data = request.json
     conv_id = data.get('conversation_uuid')
     recording_url = data.get('recording_url')
-    original_call = CommunicationLog.query.filter_by(recording_url=conv_id).first()
+    original_call = CommunicationLog.query.filter_by(sid=conv_id).first()
     caller_id = original_call.from_num if original_call else "Unknown Caller"
     if not recording_url:
         return "", 204
