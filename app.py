@@ -513,11 +513,9 @@ client = nexmo.Client(
     private_key=io.StringIO(NEXMO_PRIVATE_KEY),
 )
 
-
 @app.route("/admin/history")
 @requires_auth
 def admin_history():
-    # Fetch latest 100 events
     logs = CommunicationLog.query.order_by(CommunicationLog.timestamp.desc()).limit(100).all()
     
     return render_template_string("""
@@ -525,75 +523,43 @@ def admin_history():
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Unified Comms History</title>
+    <title>Communication History</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7f9; color: #333; line-height: 1.5; margin: 0; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; }
-        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-        h1 { margin: 0; font-size: 1.5rem; color: #1a202c; }
-        .stats { font-size: 0.875rem; color: #666; }
-        
-        .log-card { 
-            background: white; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 6px solid #cbd5e0;
-            display: grid; grid-template-columns: auto 1fr auto; gap: 1.5rem; align-items: start;
+        body { font-family: system-ui, sans-serif; background: #f0f2f5; padding: 20px; }
+        .log-container { max-width: 800px; margin: 0 auto; }
+        .card { 
+            background: white; border-radius: 10px; padding: 15px; margin-bottom: 12px;
+            border-left: 8px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex; justify-content: space-between; align-items: center;
         }
-        .log-card.twilio { border-left-color: #F22F46; } /* Twilio Red */
-        .log-card.nexmo { border-left-color: #0077ff; }  /* Nexmo Blue */
-        
-        .provider-badge { 
-            font-size: 0.7rem; font-weight: 800; text-transform: uppercase; 
-            padding: 2px 8px; border-radius: 12px; background: #edf2f7; color: #4a5568;
-        }
-        .log-main { overflow: hidden; }
-        .log-meta { font-size: 0.85rem; color: #718096; margin-bottom: 4px; }
-        .log-content { font-weight: 500; color: #2d3748; word-wrap: break-word; }
-        .log-time { font-size: 0.75rem; color: #a0aec0; text-align: right; white-space: nowrap; }
-        
-        audio { height: 32px; width: 200px; margin-top: 8px; }
-        .direction { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #e2e8f0; }
-        @media (max-width: 600px) {
-            .log-card { grid-template-columns: 1fr; gap: 0.5rem; }
-            .log-time { text-align: left; }
-            audio { width: 100%; }
-        }
+        .twilio { border-left-color: #F22F46; }
+        .nexmo { border-left-color: #0077ff; }
+        .from-num { font-size: 1.1rem; font-weight: bold; color: #1a202c; }
+        .meta { color: #666; font-size: 0.85rem; margin-top: 4px; }
+        .content { margin-top: 8px; font-style: italic; }
+        audio { height: 35px; margin-top: 10px; display: block; }
+        .time { text-align: right; color: #999; font-size: 0.8rem; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Unified Comms History</h1>
-            <div class="stats">Showing last {{ logs|length }} events</div>
-        </header>
-
+    <div class="log-container">
+        <h1>Unified History</h1>
         {% for log in logs %}
-        <div class="log-card {{ log.provider|lower }}">
+        <div class="card {{ log.provider|lower }}">
             <div>
-                <span class="provider-badge">{{ log.provider }}</span><br>
-                <span class="direction">{{ log.comm_type }}</span>
-            </div>
-            
-            <div class="log-main">
-                <div class="log-meta">
-                    <strong>From:</strong> {{ log.from_num }} 
-                    {% if log.to_num %} | <strong>To:</strong> {{ log.to_num }}{% endif %}
+                <div class="from-num">From: {{ log.from_num }}</div>
+                <div class="meta">
+                    <strong>{{ log.provider }}</strong> | {{ log.comm_type }} 
+                    {% if log.to_num %}| To: {{ log.to_num }}{% endif %}
                 </div>
-                <div class="log-content">{{ log.content }}</div>
-                
+                <div class="content">{{ log.content }}</div>
                 {% if log.recording_url %}
-                <div class="recording-player">
-                    <audio controls preload="none">
-                        <source src="{{ log.recording_url }}" type="audio/mpeg">
-                        Your browser does not support the audio element.
-                    </audio>
-                </div>
+                    <audio controls src="{{ log.recording_url }}"></audio>
                 {% endif %}
             </div>
-
-            <div class="log-time">
-                {{ log.timestamp.strftime('%b %d') }}<br>
-                {{ log.timestamp.strftime('%H:%M') }}
+            <div class="time">
+                {{ log.timestamp.strftime('%Y-%m-%d') }}<br>
+                {{ log.timestamp.strftime('%H:%M:%S') }}
             </div>
         </div>
         {% endfor %}
