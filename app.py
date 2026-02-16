@@ -638,8 +638,8 @@ def nexmo_pick_language():
         {
             "action": "connect",
             "timeout": "20",  # Give the volunteer 20 seconds to pick up
-            "from": NEXMO_NUMBER,
-            "endpoint": [{"type": "phone", "number": recipient}]
+            "from": NEXMO_NUMBER.lstrip('+'),
+            "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
         },
         {
             # This ONLY runs if the 'connect' above fails or times out
