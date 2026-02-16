@@ -599,8 +599,9 @@ def admin_history():
 </html>
     """, logs=logs)
 
+''' REMOVED FOR TESTING 
 @app.route("/answer", methods=["GET", "POST"])
-@csrf.exempt # Nexmo webhooks need CSRF exempt
+@csrf.exempt 
 def nexmo_answer():
     """Initial IVR Greeting"""
     receive_numbers = request.url_root + "language"
@@ -608,6 +609,7 @@ def nexmo_answer():
         {"action": "stream", "streamUrl": [WELCOME], "bargeIn": True},
         {"action": "input", "maxDigits": 1, "eventUrl": [receive_numbers]}
     ])
+'''
 
 @app.route("/language", methods=["POST"])
 @csrf.exempt
