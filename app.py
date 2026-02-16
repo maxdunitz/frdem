@@ -599,7 +599,6 @@ def admin_history():
 </html>
     """, logs=logs)
 
-''' REMOVED FOR TESTING 
 @app.route("/answer", methods=["GET", "POST"])
 @csrf.exempt 
 def nexmo_answer():
@@ -609,7 +608,6 @@ def nexmo_answer():
         {"action": "stream", "streamUrl": [WELCOME], "bargeIn": True},
         {"action": "input", "maxDigits": 1, "eventUrl": [receive_numbers]}
     ])
-'''
 
 @app.route("/language", methods=["POST"])
 @csrf.exempt
@@ -655,21 +653,9 @@ def nexmo_pick_language():
             "timeout": "20",  # Give the volunteer 20 seconds to pick up
             "from": NEXMO_NUMBER.lstrip('+'),
             "eventType": "synchronous",  
-            "eventUrl": [f"{request.url_root}nexmo-status"], 
+            "eventUrl": [route_url],
             "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
         },
-        {
-            # This ONLY runs if the 'connect' above fails or times out
-            "action": "talk",
-            "text": "Please wait while we transfer you to voicemail." if language == 'english' else "Veuillez patienter, nous vous transférons vers la messagerie.",
-            "language": "en-US" if language == 'english' else "fr-FR"
-        },
-        {
-            # This redirects the call flow to the actual recording logic
-            "action": "talk", 
-            "text": "Redirecting", 
-            "voiceName": "Kimberly"
-        }
     ])
     
 @app.route("/play_nexmo")
@@ -695,23 +681,7 @@ def play_nexmo():
     else:
         return f"Failed to fetch recording: {response.status_code}", 500
 
-@app.route("/answer")
-def nexmo_answer():
-    # This bypasses the menu and just dials the volunteer immediately
-    recipient = choose_recipient()
-    return jsonify([
-        {
-            "action": "talk",
-            "text": "Connecting your call."
-        },
-        {
-            "action": "connect",
-            "from": NEXMO_NUMBER.lstrip('+'),
-            "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
-        }
-    ])
     
-'''
 @app.route("/new-recording", methods=["POST"])
 @csrf.exempt
 def nexmo_new_recording():
@@ -745,7 +715,6 @@ def nexmo_new_recording():
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, subject, html)
     
     return "", 204
-'''
 
 @app.route("/nexmo-status", methods=["POST"])
 @csrf.exempt
@@ -806,6 +775,7 @@ def voicemail_french():
             "style": 0
         }
     ])
+    
 @app.route("/inbound-sms", methods=["POST"])
 @csrf.exempt
 def nexmo_inbound_sms():
