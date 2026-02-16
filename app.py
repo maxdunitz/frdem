@@ -598,6 +598,7 @@ def nexmo_pick_language():
     data = request.get_json()
     digits = data.get('dtmf', '1')
     them = data.get('from', 'unknown')
+    conv_id = data.get('conversation_uuid')
     
     if digits == "2":
         route_url = request.url_root + "voicemail_french"
@@ -610,11 +611,25 @@ def nexmo_pick_language():
     
     try:
         client.send_message({
-            "from": NEXMO_NUMBER,
-            "to": recipient,
+            "from": NEXMO_NUMBER.lstrip('+'),
+            "to": recipient.lstrip('+'),
             "text": f"VFA voter-help call from {them}. Language: {language}"
         })
-    except: pass
+    except: 
+        print("text failed", NEXMO_NUMBER, recipient)
+
+
+    new_call = CommunicationLog(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num=them,
+        to_num=NEXMO_NUMBER,
+        content=f"Call routing to {language}",
+        recording_url=conv_id # We use this field temporarily to link to the recording later
+    )
+    db_pg.session.add(new_call)
+    db_pg.session.commit()
 
     return jsonify([
         {
@@ -653,29 +668,24 @@ def play_nexmo():
 @csrf.exempt
 def nexmo_new_recording():
     data = request.json
+    conv_id = data.get('conversation_uuid')
     recording_url = data.get('recording_url')
-    # Nexmo sends the caller's number in the 'from' field of the recording webhook
-    from_num = data.get('from') or data.get('msisdn') or data.get('external_id') or "Unknown Caller"
-    if from_num.startswith('33'): # If it's French format without the +
-        from_num = '+' + from_num
-
+    original_call = CommunicationLog.query.filter_by(recording_url=conv_id).first()
+    caller_id = original_call.from_num if original_call else "Unknown Caller"
     if not recording_url:
         return "", 204
 
-    # SAVE TO POSTGRES
     new_log = CommunicationLog(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
-        from_num=from_num,
+        from_num=caller_id,
         content='New Voicemail',
         recording_url=recording_url # We keep the raw URL here for the proxy to use
     )
     db_pg.session.add(new_log)
     db_pg.session.commit()
 
-    # Create a link that points to YOUR app's proxy route
-    # This ensures the link in the email actually works
     proxy_link = f"{request.url_root}play_nexmo?url={recording_url}"
 
     subject = f"New VFA Nexmo Voicemail from {from_num}"
