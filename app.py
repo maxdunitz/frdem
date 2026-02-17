@@ -73,7 +73,6 @@ def format_paris_time(utc_dt):
 
 ## CALL HANDLING ##
 def is_business_hours():
-    return True
     return france_now().hour >= 10 and france_now().hour <= 21
 
 recipients = [RECIPIENT1, RECIPIENT2, RECIPIENT3, RECIPIENT4]
