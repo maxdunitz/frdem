@@ -20,7 +20,7 @@ import nexmo
 
 ## load environment variables
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASS = os.getenv("ADMIN_PASS")  # set in Koyeb secrets
+ADMIN_PASS = os.getenv("ADMIN_PASS").strip()  # set in Koyeb secrets
 
 TWILIO_ACCT = os.environ["TWILIO_ACCT"]
 TWILIO_SECRET = os.environ["TWILIO_SECRET"]
