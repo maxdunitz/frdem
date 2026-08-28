@@ -189,6 +189,30 @@ def health():
     '''endpoint to ping to keep the app alive on free tier.'''
     return "ok", 200
 
+
+# ---- TEMPORARY DIAGNOSTIC. DELETE THIS ROUTE ONCE LOGIN WORKS. ----
+@app.route("/admin/whoami")
+@csrf.exempt
+def admin_whoami():
+    import hashlib
+    sent = request.authorization
+    return jsonify({
+        "new_auth_code_live": True,
+        "admin_user_repr": repr(ADMIN_USER),
+        "admin_pass_len": len(ADMIN_PASS),
+        "admin_pass_sha8": hashlib.sha256(ADMIN_PASS.encode()).hexdigest()[:8],
+        "raw_env_pass_repr_len": len(os.getenv("ADMIN_PASS") or ""),
+        "browser_sent_user_repr": repr(sent.username) if sent else None,
+        "browser_sent_pass_len": len(sent.password or "") if sent else None,
+        "browser_sent_pass_sha8": (
+            hashlib.sha256((sent.password or "").encode()).hexdigest()[:8]
+            if sent else None
+        ),
+    })
+# ---- END TEMPORARY DIAGNOSTIC ----
+
+
+
 ###################### TWILIO ROUTES #########################
 
 @app.route("/receive_sms", methods=['GET', 'POST'])
