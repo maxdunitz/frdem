@@ -4,6 +4,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.twiml.voice_response import VoiceResponse, Dial, Say, Play, Gather
 from twilio.rest import Client
 import os, sys, json, datetime, re, requests, redis, psycopg2, gspread, time
+import hmac
 from flask_wtf import CSRFProtect
 from functools import wraps
 from sqlalchemy import desc
@@ -19,8 +20,8 @@ from flask_sqlalchemy import SQLAlchemy
 import nexmo 
 
 ## load environment variables
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASS = os.getenv("ADMIN_PASS").strip()  # set in Koyeb secrets
+ADMIN_USER = (os.getenv("ADMIN_USER") or "admin").strip()
+ADMIN_PASS = (os.getenv("ADMIN_PASS") or "").strip()  # set in Koyeb secrets
 
 TWILIO_ACCT = os.environ["TWILIO_ACCT"]
 TWILIO_SECRET = os.environ["TWILIO_SECRET"]
@@ -141,9 +142,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db_pg = SQLAlchemy(app)
 
-with app.app_context():
-    db_pg.create_all()
-
 class CommunicationLog(db_pg.Model):
     id = db_pg.Column(db_pg.Integer, primary_key=True)
     provider = db_pg.Column(db_pg.String(20))     # 'Twilio' or 'Nexmo'
@@ -156,9 +154,47 @@ class CommunicationLog(db_pg.Model):
     sid = db_pg.Column(db_pg.String(100))         # Store Twilio CallSid or Nexmo UUID here
     timestamp = db_pg.Column(db_pg.DateTime, default=france_now)
 
-# Initialize database
+# Initialize database. On Koyeb's free Postgres this wakes the compute and
+# spends ~5 minutes of the 5 hour/month budget, so it runs once, not twice --
+# and a database outage must not stop the phone lines from booting.
 with app.app_context():
-    db_pg.create_all()
+    try:
+        db_pg.create_all()
+    except Exception as e:
+        print("create_all failed at boot; continuing without it:", e)
+
+
+def log_comm(**fields):
+    """Best-effort write to CommunicationLog.
+
+    Logging is bookkeeping: if Postgres is asleep, out of free-tier hours or
+    unreachable, we must still return valid TwiML/NCCO or the carrier drops
+    the caller. Never let this raise.
+    """
+    try:
+        db_pg.session.add(CommunicationLog(**fields))
+        db_pg.session.commit()
+        return True
+    except Exception as e:
+        print("CommunicationLog write FAILED:", type(e).__name__, e)
+        try:
+            db_pg.session.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def find_comm(**filters):
+    """Best-effort read. Returns None instead of raising."""
+    try:
+        return CommunicationLog.query.filter_by(**filters).first()
+    except Exception as e:
+        print("CommunicationLog read FAILED:", type(e).__name__, e)
+        try:
+            db_pg.session.rollback()
+        except Exception:
+            pass
+        return None
 
 ###################### EMAIL OUR ACCOUNT ######################
 
@@ -186,31 +222,8 @@ def send_email(f, t, subject, html):
 @app.route("/health")
 @csrf.exempt
 def health():
-    '''endpoint to ping to keep the app alive on free tier.'''
+    """Cheap keep-alive target. Touches no DB, no Twilio, no Nexmo."""
     return "ok", 200
-
-
-# ---- TEMPORARY DIAGNOSTIC. DELETE THIS ROUTE ONCE LOGIN WORKS. ----
-@app.route("/admin/whoami")
-@csrf.exempt
-def admin_whoami():
-    import hashlib
-    sent = request.authorization
-    return jsonify({
-        "new_auth_code_live": True,
-        "admin_user_repr": repr(ADMIN_USER),
-        "admin_pass_len": len(ADMIN_PASS),
-        "admin_pass_sha8": hashlib.sha256(ADMIN_PASS.encode()).hexdigest()[:8],
-        "raw_env_pass_repr_len": len(os.getenv("ADMIN_PASS") or ""),
-        "browser_sent_user_repr": repr(sent.username) if sent else None,
-        "browser_sent_pass_len": len(sent.password or "") if sent else None,
-        "browser_sent_pass_sha8": (
-            hashlib.sha256((sent.password or "").encode()).hexdigest()[:8]
-            if sent else None
-        ),
-    })
-# ---- END TEMPORARY DIAGNOSTIC ----
-
 
 
 ###################### TWILIO ROUTES #########################
@@ -223,7 +236,7 @@ def receive_sms():
     to = request.form['To']
     
     # SAVE TO POSTGRES
-    new_log = CommunicationLog(
+    log_comm(
         provider='Twilio',
         comm_type='SMS',
         direction='Inbound',
@@ -231,8 +244,6 @@ def receive_sms():
         to_num=to,
         content=msg
     )
-    db_pg.session.add(new_log)
-    db_pg.session.commit()
 
     # Continue with email...
     now = france_now()
@@ -249,7 +260,7 @@ def receive_call():
     from_num = request.form.get('From', 'Unknown')
     to_num = request.form.get('To', CALLER_ID) # Your Twilio Number
 
-    new_log = CommunicationLog(
+    log_comm(
         provider='Twilio',
         comm_type='Call',
         direction='Inbound',
@@ -258,8 +269,6 @@ def receive_call():
         sid=call_sid,             # Store the link!
         content='Call Started - In Menu'
     )
-    db_pg.session.add(new_log)
-    db_pg.session.commit()
     
     resp = VoiceResponse()
 
@@ -344,6 +353,9 @@ def handle_recording_status():
     url_recording = request.form.get('RecordingUrl')
     call_sid = request.form.get('CallSid')
     status = request.form.get('RecordingStatus')
+
+    # Twilio's recordingStatusCallback does NOT include From/To -- only the
+    # recording fields plus CallSid. Resolve the caller from the call itself.
     from_number = request.form.get('From')
     if not from_number and call_sid:
         try:
@@ -391,7 +403,7 @@ def send_transcription():
         print(e, type(e))
         print(e.args)
 
-    new_log = CommunicationLog(
+    log_comm(
         provider='Twilio',
         comm_type='Call',
         direction='Inbound',
@@ -399,8 +411,6 @@ def send_transcription():
         content=f"Voicemail: {transcription_text}",
         recording_url=url_recording
     )
-    db_pg.session.add(new_log)
-    db_pg.session.commit()
     
     return str(message_body)
 
@@ -408,9 +418,20 @@ def send_transcription():
 #### DISPLAY LAST 10 CALLS IN PASSWORD-PROTECTED DEBUGGING SITE ####
 
 def check_auth(username, password):
-    return username == ADMIN_USER and password == ADMIN_PASS
+    if not ADMIN_PASS:
+        return False
+    return (hmac.compare_digest(username or "", ADMIN_USER)
+            and hmac.compare_digest(password or "", ADMIN_PASS))
 
 def authenticate():
+    # Without this, a missing ADMIN_PASS is indistinguishable from a wrong
+    # password: the browser just re-prompts forever.
+    if not ADMIN_PASS:
+        return Response(
+            "ADMIN_PASS is not set on this deployment, so no password can "
+            "ever match. Set it in the Koyeb service environment variables.",
+            500,
+        )
     return Response(
         "Authentication required", 401,
         {"WWW-Authenticate": 'Basic realm="Restricted"'}
@@ -595,8 +616,15 @@ client = nexmo.Client(
 @app.route("/admin/history")
 @requires_auth
 def admin_history():
-    logs = CommunicationLog.query.order_by(CommunicationLog.timestamp.desc()).limit(100).all()
-    
+    db_error = None
+    try:
+        logs = CommunicationLog.query.order_by(
+            CommunicationLog.timestamp.desc()).limit(100).all()
+    except Exception as e:
+        db_pg.session.rollback()
+        logs = []
+        db_error = f"Could not read the database: {type(e).__name__}: {e}"
+
     return render_template_string("""
 <!doctype html>
 <html lang="en">
@@ -623,6 +651,12 @@ def admin_history():
 <body>
     <div class="log-container">
         <h1>Unified VFA/FRDEM History</h1>
+        {% if db_error %}
+        <div style="padding:.75rem;background:#fff3cd;color:#664d03;
+                    border:1px solid #ffecb5;border-radius:6px;margin-bottom:1rem;">
+            <strong>Note:</strong> {{ db_error }}
+        </div>
+        {% endif %}
 {% for log in logs %}
 <div class="card {{ log.provider|lower }}">
     <div style="flex-grow: 1;">
@@ -654,7 +688,7 @@ def admin_history():
     </div>
 </body>
 </html>
-    """, logs=logs)
+    """, logs=logs, db_error=db_error)
 
 @app.route("/answer", methods=["GET", "POST"])
 @csrf.exempt 
@@ -683,7 +717,7 @@ def nexmo_pick_language():
 
     recipient = choose_recipient()
 
-    new_call = CommunicationLog(
+    log_comm(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
@@ -692,8 +726,6 @@ def nexmo_pick_language():
         sid=conv_id,      
         content=f"VFA call routing in {language}. Sent to {recipient}."
     )
-    db_pg.session.add(new_call)
-    db_pg.session.commit()
     
     try:
         client.send_message({
@@ -755,14 +787,14 @@ def nexmo_new_recording():
     data = request.json
     conv_id = data.get('conversation_uuid')
     recording_url = data.get('recording_url')
-    original_call = CommunicationLog.query.filter_by(sid=conv_id).first()
+    original_call = find_comm(sid=conv_id)
     caller_id = original_call.from_num if original_call else "Unknown Caller"
     to_num = original_call.to_num if original_call else NEXMO_NUMBER
 
     if not recording_url:
         return "", 204
 
-    new_log = CommunicationLog(
+    log_comm(
         provider='Nexmo',
         comm_type='Call',
         direction='Inbound',
@@ -772,8 +804,6 @@ def nexmo_new_recording():
         content='New Voicemail',
         recording_url=recording_url 
     )
-    db_pg.session.add(new_log)
-    db_pg.session.commit()
 
     proxy_link = f"{request.url_root.rstrip('/')}/play_nexmo?url={recording_url}"
     
@@ -821,7 +851,7 @@ def voicemail_english():
 @csrf.exempt
 def voicemail_french():
     print("Nexmo: Entering French Voicemail")
-    newrecording = f"{request.url_root.rstrip("/")}//new-recording"
+    newrecording = f"{request.url_root.rstrip("/")}/new-recording"
     
     return jsonify([
         {
@@ -851,15 +881,13 @@ def nexmo_inbound_sms():
     them = data.get('msisdn', 'Unknown')
 
     # SAVE TO SHARED POSTGRES
-    new_log = CommunicationLog(
+    log_comm(
         provider='Nexmo',
         comm_type='SMS',
         direction='Inbound',
         from_num=them,
         content=msg
     )
-    db_pg.session.add(new_log)
-    db_pg.session.commit()
 
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, f"Nexmo SMS from {them}", f"Body: {msg}")
     return "", 204
