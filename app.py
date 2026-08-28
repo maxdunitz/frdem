@@ -5,6 +5,7 @@ from twilio.twiml.voice_response import VoiceResponse, Dial, Say, Play, Gather
 from twilio.rest import Client
 import os, sys, json, datetime, re, requests, redis, psycopg2, gspread, time
 import hmac
+import threading
 from flask_wtf import CSRFProtect
 from functools import wraps
 from sqlalchemy import desc
@@ -196,6 +197,37 @@ def find_comm(**filters):
             pass
         return None
 
+
+def run_in_background(fn, *args, **kwargs):
+    """Run fn off the request path, inside this same process.
+
+    This is a plain thread, not a worker queue: no Redis, no second service.
+    Carriers give us a hard budget to answer a webhook (Vonage ~5s, Twilio
+    ~15s), and a sleeping database or a slow SMS API can eat all of it. Work
+    that the caller does not need to wait for goes here so the response ships
+    immediately.
+
+    The thread gets its own app context and always releases its database
+    session -- a leaked connection would keep Postgres from suspending and
+    quietly burn the free tier's monthly compute budget.
+
+    Pass values, never the request object; `request` does not exist here.
+    """
+    def runner():
+        with app.app_context():
+            try:
+                fn(*args, **kwargs)
+            except Exception as e:
+                print("background task", getattr(fn, "__name__", fn),
+                      "FAILED:", type(e).__name__, e)
+            finally:
+                try:
+                    db_pg.session.remove()
+                except Exception:
+                    pass
+
+    threading.Thread(target=runner, daemon=True).start()
+
 ###################### EMAIL OUR ACCOUNT ######################
 
 def send_email(f, t, subject, html):
@@ -260,16 +292,19 @@ def receive_call():
     from_num = request.form.get('From', 'Unknown')
     to_num = request.form.get('To', CALLER_ID) # Your Twilio Number
 
-    log_comm(
+    # This is the first webhook of the call, so a sleeping Postgres would
+    # delay the menu itself. Log in the background and play the greeting now.
+    run_in_background(
+        log_comm,
         provider='Twilio',
         comm_type='Call',
         direction='Inbound',
         from_num=from_num,
         to_num=to_num,
         sid=call_sid,             # Store the link!
-        content='Call Started - In Menu'
+        content='Call Started - In Menu',
     )
-    
+
     resp = VoiceResponse()
 
     # Read a message aloud to the caller
@@ -315,7 +350,12 @@ def french_route():
         help_type = get_help_type(choice)
         incoming_caller_id = request.values.get('From')
         message_body = f"Caller {incoming_caller_id} with {help_type} (in {language})."
-        message = twilio_client.messages.create(body=message_body, from_=CALLER_ID, to=to_call)
+        # Same reasoning as /language: notifying the volunteer is a network
+        # round trip the caller should not wait through before we dial.
+        run_in_background(
+            twilio_client.messages.create,
+            body=message_body, from_=CALLER_ID, to=to_call,
+        )
         resp.dial(to_call, timeout=12, action="/end_call")
         return str(resp)
     resp.say("I'm sorry, I didn't quite get that.")
@@ -613,6 +653,48 @@ client = nexmo.Client(
     private_key=io.StringIO(NEXMO_PRIVATE_KEY),
 )
 
+
+def send_vonage_sms(to, text):
+    """Send an SMS via Vonage with an explicit timeout.
+
+    The nexmo library hardcodes timeout=None on its requests session, so a
+    slow API call blocks forever. Even on a background thread that leaks a
+    thread per call, so bound it here.
+    """
+    resp = requests.post(
+        "https://rest.nexmo.com/sms/json",
+        data={
+            "api_key": NEXMO_API_KEY,
+            "api_secret": NEXMO_API_SECRET,
+            "from": (NEXMO_NUMBER or "").lstrip("+"),
+            "to": (to or "").lstrip("+"),
+            "text": text,
+        },
+        timeout=10,
+    )
+    body = resp.json()
+    status = body.get("messages", [{}])[0].get("status")
+    if status != "0":
+        print("Vonage SMS rejected:", body)
+    return status == "0"
+
+
+def announce_vfa_call(them, conv_id, language, recipient):
+    """Log the call and text the volunteer. Runs off the request path."""
+    log_comm(
+        provider='Nexmo',
+        comm_type='Call',
+        direction='Inbound',
+        from_num=them,
+        to_num=NEXMO_NUMBER,
+        sid=conv_id,
+        content=f"VFA call routing in {language}. Sent to {recipient}.",
+    )
+    send_vonage_sms(
+        recipient,
+        f"VFA voter-help call from {them}. Language: {language}",
+    )
+
 @app.route("/admin/history")
 @requires_auth
 def admin_history():
@@ -717,24 +799,16 @@ def nexmo_pick_language():
 
     recipient = choose_recipient()
 
-    log_comm(
-        provider='Nexmo',
-        comm_type='Call',
-        direction='Inbound',
-        from_num=them,
-        to_num=NEXMO_NUMBER,
-        sid=conv_id,      
-        content=f"VFA call routing in {language}. Sent to {recipient}."
+    # Vonage drops the caller if this webhook takes more than ~5s. The log
+    # write can block waking a sleeping Postgres, and the SMS is a second
+    # network round trip, so neither runs before we return the NCCO.
+    run_in_background(
+        announce_vfa_call,
+        them=them,
+        conv_id=conv_id,
+        language=language,
+        recipient=recipient,
     )
-    
-    try:
-        client.send_message({
-            "from": NEXMO_NUMBER.lstrip('+'),
-            "to": recipient.lstrip('+'),
-            "text": f"VFA voter-help call from {them}. Language: {language}"
-        })
-    except: 
-        print("text failed", NEXMO_NUMBER, recipient)
 
     return jsonify([
         {
