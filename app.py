@@ -88,7 +88,10 @@ def whomst_to_call(req, lang): # FRDEM
         return RECIPIENT_MEDIA
 
 def choose_recipient(): # VFA
-    numbers = [r[1:] for r in recipients]
+    # lstrip('+'), not r[1:]: the latter silently eats a real digit from any
+    # RECIPIENT env var that is not written with a leading +, producing a
+    # number Vonage cannot dial.
+    numbers = [r.lstrip('+') for r in recipients]
     return random.choice(numbers)
 
 def get_help_type(choice):
@@ -820,7 +823,7 @@ def nexmo_pick_language():
     return jsonify([
         {
             "action": "connect",
-            "timeout": "20",  # Give the volunteer 20 seconds to pick up
+            "timeout": 10,  # integer, not "10": Vonage types this as a number
             "from": NEXMO_NUMBER.lstrip('+'),
             "eventType": "synchronous",  
             "eventUrl": [route_url],
@@ -911,10 +914,31 @@ def nexmo_status():
         print(f"REASON: {data.get('detail')}")
     return "", 204
 
+def connect_event_status():
+    """Log the Vonage connect event and return its status.
+
+    Vonage calls a synchronous connect eventUrl when the volunteer's leg
+    reaches a terminal state (failed, rejected, unanswered, busy, timeout),
+    and whatever NCCO we return replaces the rest of the call. We were
+    discarding this payload, which is the only place Vonage says *why* the
+    connect failed.
+    """
+    data = request.get_json(silent=True) or {}
+    print("CONNECT EVENT:", json.dumps(data, default=str))
+    return str(data.get('status') or '').lower()
+
+
 @app.route("/voicemail_english", methods=["POST"])
 @csrf.exempt
 def voicemail_english(): 
-    print("Nexmo: Entering English Voicemail")
+    status = connect_event_status()
+    if status in ("started", "ringing", "answered"):
+        # The volunteer's phone is still ringing or already answered. Sending
+        # a voicemail NCCO here would cut them off mid-connect.
+        print("Nexmo: connect still in progress (%s); not interrupting" % status)
+        return "", 204
+
+    print("Nexmo: Entering English Voicemail after connect status:", status)
     caller = request.args.get('caller', '')
     newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
@@ -940,7 +964,14 @@ def voicemail_english():
 @app.route("/voicemail_french", methods=["POST"])
 @csrf.exempt
 def voicemail_french():
-    print("Nexmo: Entering French Voicemail")
+    status = connect_event_status()
+    if status in ("started", "ringing", "answered"):
+        # The volunteer's phone is still ringing or already answered. Sending
+        # a voicemail NCCO here would cut them off mid-connect.
+        print("Nexmo: connect still in progress (%s); not interrupting" % status)
+        return "", 204
+
+    print("Nexmo: Entering French Voicemail after connect status:", status)
     caller = request.args.get('caller', '')
     newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
