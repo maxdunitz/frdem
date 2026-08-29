@@ -6,6 +6,7 @@ from twilio.rest import Client
 import os, sys, json, datetime, re, requests, redis, psycopg2, gspread, time
 import hmac
 import threading
+from urllib.parse import quote
 from flask_wtf import CSRFProtect
 from functools import wraps
 from sqlalchemy import desc
@@ -790,11 +791,17 @@ def nexmo_pick_language():
     them = data.get('from', 'unknown')
     conv_id = data.get('conversation_uuid')
 
+    # Vonage's own webhooks do not carry the original caller past this point
+    # (the connect leg's "from" is our Vonage number, not theirs), and the
+    # Postgres row we write below may not exist if the free tier is
+    # exhausted. So thread the caller through the callback URLs themselves.
+    caller_qs = f"?caller={quote(str(them))}"
+
     if digits == "2":
-        route_url = f"{request.url_root.rstrip('/')}/voicemail_french"
+        route_url = f"{request.url_root.rstrip('/')}/voicemail_french{caller_qs}"
         language = 'french'
     else:
-        route_url = f"{request.url_root.rstrip('/')}/voicemail_english"
+        route_url = f"{request.url_root.rstrip('/')}/voicemail_english{caller_qs}"
         language = 'english'
 
     recipient = choose_recipient()
@@ -826,7 +833,7 @@ def nexmo_pick_language():
             {
                 "action": "record",
                 "beepStart": True,
-                "eventUrl": [f"{request.url_root.rstrip('/')}/new-recording"],
+                "eventUrl": [f"{request.url_root.rstrip('/')}/new-recording{caller_qs}"],
                 "endOnSilence": 3
             }
     ])
@@ -861,9 +868,17 @@ def nexmo_new_recording():
     data = request.json
     conv_id = data.get('conversation_uuid')
     recording_url = data.get('recording_url')
-    original_call = find_comm(sid=conv_id)
-    caller_id = original_call.from_num if original_call else "Unknown Caller"
-    to_num = original_call.to_num if original_call else NEXMO_NUMBER
+    # The caller rides in on the URL we built, so this email survives the
+    # database being asleep, exhausted or unreachable. Postgres is only the
+    # fallback now, and it is consulted only when the URL did not carry one.
+    caller_id = request.args.get('caller') or None
+    to_num = NEXMO_NUMBER
+    if not caller_id:
+        original_call = find_comm(sid=conv_id)
+        if original_call:
+            caller_id = original_call.from_num
+            to_num = original_call.to_num
+    caller_id = caller_id or "Unknown Caller"
 
     if not recording_url:
         return "", 204
@@ -900,7 +915,8 @@ def nexmo_status():
 @csrf.exempt
 def voicemail_english(): 
     print("Nexmo: Entering English Voicemail")
-    newrecording = f"{request.url_root.rstrip('/')}/new-recording"
+    caller = request.args.get('caller', '')
+    newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
     return jsonify([
         {
@@ -925,7 +941,8 @@ def voicemail_english():
 @csrf.exempt
 def voicemail_french():
     print("Nexmo: Entering French Voicemail")
-    newrecording = f"{request.url_root.rstrip("/")}/new-recording"
+    caller = request.args.get('caller', '')
+    newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
     return jsonify([
         {
