@@ -255,6 +255,24 @@ def send_email(f, t, subject, html):
         print(e.args)
 
 
+def alert_transfer_failure(provider, summary, details):
+    """Email the tech list when a transfer fails for a reason that is not
+    simply the volunteer being unavailable.
+
+    Deliberately narrow: no-answer, busy and timeout are ordinary outcomes
+    and are not reported. rejected/failed mean the carrier or our config
+    refused the leg, which nobody would otherwise notice -- the caller just
+    quietly lands in voicemail.
+    """
+    send_email(
+        FROM_EMAIL,
+        RECIPIENT_EMAILS,
+        f"[DAF] {provider} transfer failed: {summary}",
+        f"<h3>{provider} could not transfer a caller</h3>"
+        f"<p>{summary}</p><pre>{details}</pre>",
+    )
+
+
 @app.route("/health")
 @csrf.exempt
 def health():
@@ -370,6 +388,24 @@ def french_route():
 @csrf.exempt
 def end_call_french():
     resp = VoiceResponse()
+
+    # <Dial> fires this action on every outcome, including a conversation
+    # that went fine. Without this check, a caller whose volunteer hangs up
+    # first gets dropped into "leave a message after the tone".
+    dial_status = request.values.get('DialCallStatus')
+    if dial_status == 'completed':
+        resp.play(FDR_URL)
+        resp.hangup()
+        return str(resp)
+
+    if dial_status == 'failed':
+        run_in_background(
+            alert_transfer_failure,
+            provider="Twilio",
+            summary=f"dial failed for CallSid {request.values.get('CallSid')}",
+            details=json.dumps(request.values.to_dict(), indent=2, default=str),
+        )
+
     language = session.get('language', 'english')
     if language == 'english':
         resp.play(VOICEMAIL_ENGLISH_URL)
@@ -938,7 +974,18 @@ def connect_event_status():
     """
     data = request.get_json(silent=True) or {}
     print("CONNECT EVENT:", json.dumps(data, default=str))
-    return str(data.get('status') or '').lower()
+    status = str(data.get('status') or '').lower()
+
+    if status in ("rejected", "failed"):
+        run_in_background(
+            alert_transfer_failure,
+            provider="Vonage",
+            summary=f"{status} ({data.get('detail') or 'no detail'}) "
+                    f"dialling {data.get('to')}",
+            details=json.dumps(data, indent=2, default=str),
+        )
+
+    return status
 
 
 @app.route("/voicemail_english", methods=["POST"])
