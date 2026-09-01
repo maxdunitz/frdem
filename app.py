@@ -645,6 +645,19 @@ FRENCH = os.getenv("FRENCH_OHGODVOTE")
 ENGLISH = os.getenv("ENGLISH_OHGODVOTE")
 NEXMO_NUMBER = os.getenv("NEXMO_NUMBER")
 
+# ARCEP bars A2P outbound calls to France whose CLI is a French mobile
+# (336/337). NEXMO_NUMBER is a 336 number, so it cannot be the caller ID on a
+# transfer -- local carriers reject the leg with SIP 403 / detail "restricted".
+# Set NEXMO_OUTBOUND_CLI to a Vonage number outside those ranges (a 01-05
+# geographic or an 09 number). Inbound calls and SMS keep using NEXMO_NUMBER,
+# so the advertised number does not change.
+NEXMO_OUTBOUND_CLI = (os.getenv("NEXMO_OUTBOUND_CLI") or NEXMO_NUMBER or "").lstrip("+")
+
+if NEXMO_OUTBOUND_CLI.startswith(("336", "337")):
+    print("WARNING: NEXMO_OUTBOUND_CLI", NEXMO_OUTBOUND_CLI,
+          "is a French mobile range; transfers to France will be rejected. "
+          "Set NEXMO_OUTBOUND_CLI to a non-336/337 Vonage number.")
+
 NEXMO_PRIVATE_KEY = os.getenv("NEXMO_PRIVATE_KEY")
 NEXMO_APPLICATION_ID = os.getenv("NEXMO_APPLICATION_ID")
 NEXMO_API_KEY = os.getenv("NEXMO_API_KEY")
@@ -824,7 +837,7 @@ def nexmo_pick_language():
         {
             "action": "connect",
             "timeout": 10,  # integer, not "10": Vonage types this as a number
-            "from": NEXMO_NUMBER.lstrip('+'),
+            "from": NEXMO_OUTBOUND_CLI,   # must not be 336/337, see above
             "eventType": "synchronous",  
             "eventUrl": [route_url],
             "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
