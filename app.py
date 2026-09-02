@@ -987,18 +987,22 @@ def nexmo_status():
         print(f"REASON: {data.get('detail')}")
     return "", 204
 
-def connect_event_status():
-    """Log the Vonage connect event and return its status.
+def connect_followup(goodbye_text, goodbye_lang):
+    """Decide what to do with a Vonage connect event.
 
-    Vonage calls a synchronous connect eventUrl when the volunteer's leg
-    reaches a terminal state (failed, rejected, unanswered, busy, timeout),
-    and whatever NCCO we return replaces the rest of the call. We were
-    discarding this payload, which is the only place Vonage says *why* the
-    connect failed.
+    Returns a response to send *instead* of voicemail, or None to fall
+    through to it. Vonage reports the volunteer's leg at every stage, and
+    the NCCO we return replaces the rest of the call -- so answering the
+    wrong event hijacks a call that is going fine.
+
+    Note the NCCO built in /language has stream+record after the connect, so
+    "return nothing" is not neutral once the connect ends: the caller falls
+    into voicemail anyway. A leg that was actually answered has to be ended
+    explicitly.
     """
     data = request.get_json(silent=True) or {}
     print("CONNECT EVENT:", json.dumps(data, default=str))
-    status = str(data.get('status') or '').lower()
+    status = str(data.get("status") or "").lower()
 
     if status in ("rejected", "failed"):
         run_in_background(
@@ -1009,20 +1013,38 @@ def connect_event_status():
             details=json.dumps(data, indent=2, default=str),
         )
 
-    return status
+    if status in ("started", "ringing", "answered"):
+        print("Nexmo: connect in progress (%s); not interrupting" % status)
+        return "", 204
+
+    if status == "completed":
+        try:
+            talked = int(data.get("duration") or 0) > 0
+        except (TypeError, ValueError):
+            talked = False
+        if talked:
+            # The volunteer took the call. Never voicemail someone who has
+            # just finished speaking to a human.
+            print("Nexmo: connect completed after", data.get("duration"),
+                  "s of conversation; ending call")
+            return jsonify([{"action": "talk", "text": goodbye_text,
+                             "language": goodbye_lang, "style": 0}])
+        # Summary event trailing a failure; that failure already replied.
+        print("Nexmo: connect completed with no conversation; already handled")
+        return "", 204
+
+    print("Nexmo: connect status", status or "(none)", "-> voicemail")
+    return None
 
 
 @app.route("/voicemail_english", methods=["POST"])
 @csrf.exempt
 def voicemail_english(): 
-    status = connect_event_status()
-    if status in ("started", "ringing", "answered"):
-        # The volunteer's phone is still ringing or already answered. Sending
-        # a voicemail NCCO here would cut them off mid-connect.
-        print("Nexmo: connect still in progress (%s); not interrupting" % status)
-        return "", 204
+    early = connect_followup('Thank you for calling. Goodbye.', 'en-US')
+    if early is not None:
+        return early
 
-    print("Nexmo: Entering English Voicemail after connect status:", status)
+    print("Nexmo: Entering English Voicemail")
     caller = request.args.get('caller', '')
     newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
@@ -1048,14 +1070,11 @@ def voicemail_english():
 @app.route("/voicemail_french", methods=["POST"])
 @csrf.exempt
 def voicemail_french():
-    status = connect_event_status()
-    if status in ("started", "ringing", "answered"):
-        # The volunteer's phone is still ringing or already answered. Sending
-        # a voicemail NCCO here would cut them off mid-connect.
-        print("Nexmo: connect still in progress (%s); not interrupting" % status)
-        return "", 204
+    early = connect_followup('Merci pour votre appel. Au revoir.', 'fr-FR')
+    if early is not None:
+        return early
 
-    print("Nexmo: Entering French Voicemail after connect status:", status)
+    print("Nexmo: Entering French Voicemail")
     caller = request.args.get('caller', '')
     newrecording = f"{request.url_root.rstrip('/')}/new-recording?caller={quote(caller)}"
     
