@@ -689,6 +689,17 @@ NEXMO_NUMBER = os.getenv("NEXMO_NUMBER")
 # so the advertised number does not change.
 NEXMO_OUTBOUND_CLI = (os.getenv("NEXMO_OUTBOUND_CLI") or NEXMO_NUMBER or "").lstrip("+")
 
+# Experiment flag. Vonage's NCCO reference says "from" must be one of your
+# Vonage virtual numbers "as the call won't connect otherwise", which would
+# make caller-ID passthrough impossible. Other sources claim it works when
+# caller and destination are in the same country, which is our case. Set
+# NEXMO_USE_CALLER_CLI=1 to try presenting the inbound caller's own number on
+# the transfer leg; the CONNECT EVENT log line settles it in one call. Unset
+# it to fall straight back to NEXMO_OUTBOUND_CLI.
+NEXMO_USE_CALLER_CLI = (os.getenv("NEXMO_USE_CALLER_CLI") or "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
 if NEXMO_OUTBOUND_CLI.startswith(("336", "337")):
     print("WARNING: NEXMO_OUTBOUND_CLI", NEXMO_OUTBOUND_CLI,
           "is a French mobile range; transfers to France will be rejected. "
@@ -858,6 +869,14 @@ def nexmo_pick_language():
 
     recipient = choose_recipient()
 
+    caller_digits = str(them or "").lstrip("+")
+    if NEXMO_USE_CALLER_CLI and caller_digits.isdigit():
+        connect_from = caller_digits
+    else:
+        connect_from = NEXMO_OUTBOUND_CLI
+    print("Nexmo connect: from", connect_from, "-> to", recipient,
+          "(caller CLI passthrough %s)" % ("ON" if NEXMO_USE_CALLER_CLI else "off"))
+
     # Vonage drops the caller if this webhook takes more than ~5s. The log
     # write can block waking a sleeping Postgres, and the SMS is a second
     # network round trip, so neither runs before we return the NCCO.
@@ -873,7 +892,7 @@ def nexmo_pick_language():
         {
             "action": "connect",
             "timeout": 10,  # integer, not "10": Vonage types this as a number
-            "from": NEXMO_OUTBOUND_CLI,   # must not be 336/337, see above
+            "from": connect_from,
             "eventType": "synchronous",  
             "eventUrl": [route_url],
             "endpoint": [{"type": "phone", "number": recipient.lstrip('+')}]
