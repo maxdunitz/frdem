@@ -41,6 +41,11 @@ CALLER_ID_US = os.environ["CALLER_ID_US"]
 FROM_EMAIL = os.environ['FROM_EMAIL']
 RECIPIENT_EMAILS = [os.environ['RESPONSE_LIST'], os.environ['TECH_LIST']]
 
+# Operational alerts (failed transfers) are noise for the response and tech
+# lists -- they want voicemails, not carrier diagnostics. Send them to one
+# person instead; override with the ALERT_EMAIL env var.
+ALERT_EMAIL = os.getenv("ALERT_EMAIL") or "max.dunitz@democratsabroad.fr"
+
 SECRET_KEY = os.environ['SECRET_KEY']
 CALLBACK_URL = os.environ['CALLBACK_URL']
 
@@ -266,7 +271,7 @@ def alert_transfer_failure(provider, summary, details):
     """
     send_email(
         FROM_EMAIL,
-        RECIPIENT_EMAILS,
+        [ALERT_EMAIL],
         f"[DAF] {provider} transfer failed: {summary}",
         f"<h3>{provider} could not transfer a caller</h3>"
         f"<p>{summary}</p><pre>{details}</pre>",
