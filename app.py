@@ -845,7 +845,15 @@ def admin_history():
 @csrf.exempt 
 def nexmo_answer():
     """Initial IVR Greeting"""
-    receive_numbers = f"{request.url_root.rstrip('/')}/language"
+    # Vonage puts the caller in this webhook's query string and then never
+    # mentions them again: the input event that hits /language carries only
+    # the digits and the uuids. Pass it along explicitly or it is lost, which
+    # is what made every volunteer SMS read "call from unknown".
+    payload = request.get_json(silent=True) or {}
+    caller = request.args.get('from') or payload.get('from') or 'unknown'
+    print("Nexmo answer: caller", caller)
+    receive_numbers = (f"{request.url_root.rstrip('/')}/language"
+                       f"?caller={quote(str(caller))}")
     return jsonify([
         {"action": "stream", "streamUrl": [WELCOME], "bargeIn": True},
         {"action": "input", "maxDigits": 1, "eventUrl": [receive_numbers]}
@@ -854,9 +862,19 @@ def nexmo_answer():
 @app.route("/language", methods=["POST"])
 @csrf.exempt
 def nexmo_pick_language():
-    data = request.get_json()
-    digits = data.get('dtmf', '1')
-    them = data.get('from', 'unknown')
+    data = request.get_json(silent=True) or {}
+    print("LANGUAGE EVENT:", json.dumps(data, default=str))
+
+    # Newer Vonage input events nest the digits; older ones send a bare
+    # string. Accept both so a format change cannot silently force English.
+    raw_dtmf = data.get('dtmf')
+    if isinstance(raw_dtmf, dict):
+        digits = str(raw_dtmf.get('digits') or '')
+    else:
+        digits = str(raw_dtmf or '')
+
+    # /answer passes the caller in; the event payload itself has no "from".
+    them = request.args.get('caller') or data.get('from') or 'unknown'
     conv_id = data.get('conversation_uuid')
 
     # Vonage's own webhooks do not carry the original caller past this point
