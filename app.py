@@ -383,7 +383,7 @@ def french_route():
             twilio_client.messages.create,
             body=message_body, from_=CALLER_ID, to=to_call,
         )
-        resp.dial(to_call, timeout=12, action="/end_call")
+        resp.dial(to_call, timeout=25, action="/end_call")
         return str(resp)
     resp.say("I'm sorry, I didn't quite get that.")
     resp.redirect("/route")
@@ -911,10 +911,26 @@ def nexmo_pick_language():
         recipient=recipient,
     )
 
+    # "A URL value that points to a ringbackTone to be played back on repeat
+    # to the caller, so they don't hear silence" -- without one, Vonage leaves
+    # the caller in total silence for the whole ring window, which is
+    # indistinguishable from the call having dropped into voicemail already.
+    if language == 'french':
+        hold_text, hold_lang = ("Merci de patienter, nous vous mettons en "
+                                "relation avec un ou une b\u00e9n\u00e9vole.", "fr-FR")
+    else:
+        hold_text, hold_lang = ("Please hold while we connect you to a "
+                                "volunteer.", "en-US")
+
     return jsonify([
+        {"action": "talk", "text": hold_text, "language": hold_lang,
+         "style": 0},
         {
             "action": "connect",
-            "timeout": 10,  # integer, not "10": Vonage types this as a number
+            # Vonage's own default is 60s and the max is 120. The 10 that used
+            # to be here gave a volunteer about two rings to find their phone,
+            # so nearly every call ring_timeout'd into voicemail.
+            "timeout": 25,  # integer, not "25": Vonage types this as a number
             "from": connect_from,
             "eventType": "synchronous",  
             "eventUrl": [route_url],
@@ -959,7 +975,9 @@ def play_nexmo():
 @app.route("/new-recording", methods=["POST"])
 @csrf.exempt
 def nexmo_new_recording():
-    data = request.json
+    # Lifecycle events land here too while the application's Event URL points
+    # at this route, and request.json raises on a body that is not JSON.
+    data = request.get_json(silent=True) or {}
     conv_id = data.get('conversation_uuid')
     recording_url = data.get('recording_url')
     # The caller rides in on the URL we built, so this email survives the
