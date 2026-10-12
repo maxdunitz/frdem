@@ -1152,3 +1152,91 @@ def nexmo_inbound_sms():
 
     send_email(FROM_EMAIL, RECIPIENT_EMAILS, f"Nexmo SMS from {them}", f"Body: {msg}")
     return "", 204
+
+###################### REACH RELAY ######################
+# Our US Vonage number is otherwise idle: it exists only to be the caller ID on
+# a Vonage transfer, because Vonage will not present the voter's own number the
+# way Twilio does. This route puts it to a second use. Texts arriving there are
+# forwarded to REACH_CODE, so someone on a French phone can receive an SMS
+# verification code from a service that demands a US number.
+#
+# None of this belongs to the voice help line. Own route, own sender, and no
+# existing line of this file touched. Point ONLY this number's inbound SMS
+# webhook at /reach-sms.
+REACH_CODE = (os.getenv("REACH_CODE") or "").strip()
+
+# Shared secret, carried as the last path segment: Vonage is the only caller
+# and holds the whole URL, so the secret belongs in an env var and never in
+# this file. Set REACH_SMS_TOKEN on Koyeb and point the webhook at
+# /reach-sms/<that value>. Unset, the bare /reach-sms stays open.
+#
+# It must be URL-safe and contain no slash, since a slash would read as a
+# further path segment and match nothing.
+REACH_SMS_TOKEN = (os.getenv("REACH_SMS_TOKEN") or "").strip()
+
+
+def relay_text(sender_id, them, msg):
+    """Forward one text to REACH_CODE. On a thread; Vonage times webhooks out.
+
+    Sent from the US number the text arrived on, never from NEXMO_NUMBER.
+    NEXMO_NUMBER is the advertised help line; relaying arbitrary inbound
+    traffic out through it risks the carriers flagging it, and that number
+    matters far more than this relay does. The cost is that US-to-France is an
+    unproven route for this account, so a refusal shows up in the log below
+    rather than on Ali's phone.
+    """
+    resp = requests.post(
+        "https://rest.nexmo.com/sms/json",
+        data={
+            "api_key": NEXMO_API_KEY,
+            "api_secret": NEXMO_API_SECRET,
+            "from": (sender_id or "").lstrip("+"),
+            "to": REACH_CODE.lstrip("+"),
+            "text": "From +%s: %s" % (re.sub(r"[^0-9]", "", them or ""), msg),
+        },
+        timeout=10,
+    )
+    body = resp.json()
+    if body.get("messages", [{}])[0].get("status") != "0":
+        print("REACH relay rejected by Vonage:", body)
+
+
+@app.route("/reach-sms", methods=["GET", "POST"])
+@app.route("/reach-sms/<token>", methods=["GET", "POST"])
+@csrf.exempt
+def reach_sms(token=None):
+    # Compared as bytes: compare_digest refuses str arguments outside ASCII,
+    # and a stray character in a URL should answer 404, not raise a 500.
+    if REACH_SMS_TOKEN and not hmac.compare_digest(
+            (token or "").encode("utf-8", "ignore"),
+            REACH_SMS_TOKEN.encode("utf-8", "ignore")):
+        print("reach-sms: bad or missing token")
+        return "", 404
+
+    # Vonage sends inbound SMS as JSON, as a form body or on the query string
+    # depending on an account setting. Accept all three: a verification code
+    # arrives once and there is no second attempt at it.
+    data = request.get_json(silent=True) or request.values.to_dict(flat=True)
+    them = (data.get("msisdn") or "").strip()
+    msg = data.get("text") or ""
+    arrived_on = re.sub(r"[^0-9]", "", data.get("to") or "")
+
+    if not REACH_CODE:
+        print("REACH_CODE unset; dropping text from", them or "unknown")
+        return "", 204
+
+    # Without this, anything scanning the Koyeb hostname sends Ali a junk text
+    # and we pay Vonage for it.
+    if not msg:
+        return "", 204
+
+    # Hard refusal rather than a fallback: if the webhook were ever set at the
+    # account level, help-line texts would arrive here and go back out on the
+    # help-line number itself.
+    if not arrived_on or arrived_on == re.sub(r"[^0-9]", "", NEXMO_NUMBER or ""):
+        print("reach-sms: refusing to relay from", arrived_on or "(no 'to')")
+        return "", 204
+
+    run_in_background(relay_text, arrived_on, them, msg)
+    print("Relaying text from", them or "unknown", "to REACH_CODE")
+    return "", 204
